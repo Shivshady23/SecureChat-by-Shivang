@@ -46,9 +46,9 @@ export default function ChatHeader({
             type="button"
             className="chat-back-btn"
             onClick={onBackToList}
-            title="Back to chats"
+            title="Show sidebar"
           >
-            {"\u2190"}
+            {"\u2192"}
           </button>
         )}
         <div className="chat-header-avatar">
