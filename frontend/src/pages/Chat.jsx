@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, api, apiForm, apiUpload } from "../services/api.js";
 import {
   clearAuth,
+  getToken,
   getUser,
   setUser
 } from "../services/storage.js";
@@ -1835,10 +1836,69 @@ export default function Chat() {
   }
 
   async function fetchMessageFileBlob(message) {
-    const res = await fetch(`${API_BASE}/api/upload/${message.fileKey}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("sc_token")}` }
-    });
-    if (!res.ok) throw new Error("Download failed");
+    const authHeaders = (() => {
+      const token = getToken();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    })();
+
+    const extractFileKey = (msg) => {
+      const explicit = String(msg?.fileKey || "").trim();
+      if (explicit) return explicit;
+      const fromUrl = String(msg?.fileUrl || msg?.content || "").trim();
+      if (!fromUrl) return "";
+      if (fromUrl.startsWith("/uploads/")) {
+        return fromUrl.split("/").filter(Boolean).pop() || "";
+      }
+      try {
+        const parsed = new URL(fromUrl);
+        if (parsed.pathname.startsWith("/uploads/")) {
+          return parsed.pathname.split("/").filter(Boolean).pop() || "";
+        }
+      } catch {}
+      return "";
+    };
+
+    const resolvePublicUploadUrl = (msg, fallbackKey = "") => {
+      const value = String(msg?.fileUrl || msg?.content || "").trim();
+      if (value.startsWith("http://") || value.startsWith("https://")) return value;
+      if (value.startsWith("/uploads/")) return `${API_BASE}${value}`;
+      if (fallbackKey) return `${API_BASE}/uploads/${fallbackKey}`;
+      return "";
+    };
+
+    let res = null;
+    const fileKey = extractFileKey(message);
+    if (fileKey) {
+      const secureRes = await fetch(`${API_BASE}/api/upload/${encodeURIComponent(fileKey)}`, {
+        headers: authHeaders
+      });
+      if (secureRes.ok) {
+        res = secureRes;
+      } else {
+        const publicUrl = resolvePublicUploadUrl(message, fileKey);
+        if (publicUrl) {
+          const fallbackRes = await fetch(publicUrl, { headers: authHeaders });
+          if (fallbackRes.ok) {
+            res = fallbackRes;
+          } else {
+            throw new Error(`Download failed (${secureRes.status}/${fallbackRes.status})`);
+          }
+        } else {
+          throw new Error(`Download failed (${secureRes.status})`);
+        }
+      }
+    } else {
+      const publicUrl = resolvePublicUploadUrl(message);
+      if (!publicUrl) {
+        throw new Error("Download failed (file reference missing)");
+      }
+      const publicRes = await fetch(publicUrl, { headers: authHeaders });
+      if (!publicRes.ok) {
+        throw new Error(`Download failed (${publicRes.status})`);
+      }
+      res = publicRes;
+    }
+
     const buffer = await res.arrayBuffer();
 
     let fileBuffer = buffer;
