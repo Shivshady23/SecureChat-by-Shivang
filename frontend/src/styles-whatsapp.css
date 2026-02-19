@@ -5855,3 +5855,208 @@ body,
   color: #effff5;
 }
 
+/* --- WhatsApp-like Responsive Tune-up --- */
+.chat-create-icon {
+  display: none;
+  font-size: 1rem;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.chat-create-label {
+  display: inline;
+}
+
+@supports (height: 100dvh) {
+  .chat-app,
+  .sidebar,
+  .main-content,
+  .chat-container {
+    min-height: 100dvh;
+  }
+
+  .chat-app {
+    height: 100dvh;
+  }
+}
+
+@media (max-width: 960px) {
+  .chat-app.mobile {
+    min-height: 100dvh;
+    height: 100dvh;
+    overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .chat-app.mobile .sidebar.sidebar-shell {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    border-right: none;
+    border-radius: 0;
+  }
+
+  .chat-app.mobile .sidebar-shell .sidebar-rail {
+    width: 58px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .chat-app.mobile .sidebar-shell .sidebar-panel {
+    border-radius: 0;
+  }
+
+  .chat-app.mobile .chat-list-header.modern {
+    padding-top: calc(14px + env(safe-area-inset-top));
+  }
+
+  .chat-app.mobile .chat-list-container.modern .chat-list-header h2 {
+    font-size: clamp(1.45rem, 6vw, 1.9rem);
+  }
+
+  .chat-app.mobile .chat-header-create-btn {
+    padding: 8px 12px;
+    font-size: 0.84rem;
+    white-space: nowrap;
+  }
+
+  .chat-app.mobile .chat-header {
+    padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+    gap: 8px;
+  }
+
+  .chat-app.mobile .chat-header-info {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .chat-app.mobile .chat-header-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 0.92rem;
+  }
+
+  .chat-app.mobile .chat-header-title {
+    font-size: 0.94rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-app.mobile .chat-header-subtitle {
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 38vw;
+  }
+
+  .chat-app.mobile .chat-header-actions {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .chat-app.mobile .header-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .chat-app.mobile .message-list {
+    padding: 10px 10px 6px;
+  }
+
+  .chat-app.mobile .message-bubble {
+    max-width: 86%;
+  }
+
+  .chat-app.mobile .message-composer {
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  .chat-app.mobile .composer-actions {
+    gap: 6px;
+  }
+
+  .chat-app.mobile .action-button,
+  .chat-app.mobile .send-button {
+    width: 34px;
+    height: 34px;
+    font-size: 0.96rem;
+    border-radius: 10px;
+  }
+
+  .chat-app.mobile .message-input {
+    min-height: 40px;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+  }
+
+  .chat-app.mobile .replying-banner,
+  .chat-app.mobile .upload-preview {
+    left: 8px;
+    right: 8px;
+  }
+
+  .chat-app.mobile .sidebar-shell .chat-item,
+  .chat-app.mobile .sidebar-shell .user-item,
+  .chat-app.mobile .sidebar-shell .request-item {
+    padding: 10px 12px;
+  }
+
+  .chat-app.mobile .sidebar-shell .chat-avatar {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-app.mobile .sidebar-shell .sidebar-rail {
+    width: 52px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .chat-app.mobile .sidebar-shell .rail-btn,
+  .chat-app.mobile .sidebar-shell .rail-profile-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .chat-app.mobile .sidebar-shell .rail-profile-avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .chat-app.mobile .chat-header-create-btn {
+    min-width: 40px;
+    padding: 8px 10px;
+  }
+
+  .chat-app.mobile .chat-create-label {
+    display: none;
+  }
+
+  .chat-app.mobile .chat-create-icon {
+    display: inline;
+  }
+
+  .chat-app.mobile .call-active-panel {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    overflow: auto;
+  }
+
+  .chat-app.mobile .call-controls {
+    justify-content: stretch;
+  }
+
+  .chat-app.mobile .call-controls .btn-secondary,
+  .chat-app.mobile .call-controls .btn-primary {
+    flex: 1 1 calc(50% - 6px);
+  }
+}
+

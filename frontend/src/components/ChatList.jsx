@@ -114,7 +114,8 @@ export default function ChatList({
                 onClick={() => onQuickCreateGroup?.()}
                 title="Create Group"
               >
-                Create Group
+                <span className="chat-create-icon" aria-hidden="true">+</span>
+                <span className="chat-create-label">Create Group</span>
               </button>
             )}
             <div className="chat-list-menu-wrap" ref={menuRef}>
