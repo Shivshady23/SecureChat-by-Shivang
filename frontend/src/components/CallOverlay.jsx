@@ -18,6 +18,23 @@ function CallVideo({ stream, muted = false, className = "" }) {
   return <video ref={ref} className={className} autoPlay playsInline muted={muted} />;
 }
 
+function CallAudio({ stream }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.srcObject = stream || null;
+    if (stream) {
+      const playback = ref.current.play();
+      if (playback && typeof playback.catch === "function") {
+        playback.catch(() => {});
+      }
+    }
+  }, [stream]);
+
+  return <audio ref={ref} autoPlay playsInline />;
+}
+
 export default function CallOverlay({
   callState,
   localStream,
@@ -42,6 +59,8 @@ export default function CallOverlay({
 
   return (
     <div className="call-overlay-backdrop">
+      {!isIncoming && isVoice && remoteStream ? <CallAudio stream={remoteStream} /> : null}
+
       {isIncoming ? (
         <div className="call-incoming-modal">
           <h3>Incoming {isVoice ? "Voice" : "Video"} Call</h3>
@@ -118,4 +137,3 @@ export default function CallOverlay({
     </div>
   );
 }
-
