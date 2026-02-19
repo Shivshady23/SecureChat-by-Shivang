@@ -61,7 +61,7 @@ export default function Sidebar({
   }
 
   const pendingIncoming = (requests?.incoming || []).filter((r) => r.status === "pending").length;
-  const chatCount = chats?.length || 0;
+  const unreadChatCount = (chats || []).filter((chat) => Number(chat?.unreadCount || 0) > 0).length;
   const avatarSrc = getAvatarSrc(user?.avatarUrl);
   const callRows = useMemo(() => {
     const normalizedSearch = callsSearch.trim().toLowerCase();
@@ -94,7 +94,9 @@ export default function Sidebar({
           title="Chats"
         >
           <span className="rail-icon">{"\u2630"}</span>
-          {chatCount > 0 && <span className="rail-badge success">{chatCount > 99 ? "99+" : chatCount}</span>}
+          {unreadChatCount > 0 && (
+            <span className="rail-badge success">{unreadChatCount > 99 ? "99+" : unreadChatCount}</span>
+          )}
         </button>
 
         <button
