@@ -5855,6 +5855,22 @@ body,
   color: #effff5;
 }
 
+.chat-header-mobile-sidebar-btn {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.chat-header-mobile-sidebar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (min-width: 961px) {
+  .chat-header-mobile-sidebar-btn {
+    display: none;
+  }
+}
+
 /* --- WhatsApp-like Responsive Tune-up --- */
 .chat-create-icon {
   display: none;
