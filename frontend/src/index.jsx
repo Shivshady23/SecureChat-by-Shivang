@@ -19,13 +19,22 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 );
 
 if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
-  const publicUrl = process.env.PUBLIC_URL || "";
-  const swUrl = `${publicUrl}/sw.js`;
+  window.addEventListener("load", async () => {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
 
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register(swUrl).catch(() => {
-      // Service worker registration failures should not break app boot.
-    });
+      if ("caches" in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(
+          cacheKeys
+            .filter((key) => key.startsWith("securechat-"))
+            .map((key) => caches.delete(key))
+        );
+      }
+    } catch {
+      // Cache cleanup issues should not block app boot.
+    }
   });
 }
 

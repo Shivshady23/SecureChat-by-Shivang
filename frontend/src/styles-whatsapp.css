@@ -4740,50 +4740,8 @@ body,
   color: var(--whatsapp-green);
 }
 
-.undo-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0 16px 10px;
-}
-
-.undo-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  border: 1px solid rgba(169, 181, 221, 0.28);
-  background: rgba(13, 19, 48, 0.86);
-  box-shadow: 0 8px 18px rgba(6, 10, 24, 0.34);
-}
-
-.undo-label {
-  font-size: 0.8rem;
-  color: #e5ebff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.undo-btn {
-  border: 1px solid rgba(169, 181, 221, 0.28);
-  border-radius: 999px;
-  padding: 4px 10px;
-  background: rgba(84, 101, 255, 0.2);
-  color: #f5f8ff;
-  font-size: 0.76rem;
-  cursor: pointer;
-}
-
-.undo-btn:hover {
-  background: rgba(84, 101, 255, 0.38);
-}
-
 :root:not(.theme-dark) .message-radial-menu::before,
-:root:not(.theme-dark) .message-emoji-bar,
-:root:not(.theme-dark) .undo-item {
+:root:not(.theme-dark) .message-emoji-bar {
   background: rgba(246, 249, 255, 0.95);
   border-color: rgba(84, 101, 255, 0.3);
 }
@@ -4804,20 +4762,6 @@ body,
 
 :root:not(.theme-dark) .message-emoji-btn:hover {
   background: rgba(84, 101, 255, 0.16);
-}
-
-:root:not(.theme-dark) .undo-label {
-  color: #25346f;
-}
-
-:root:not(.theme-dark) .undo-btn {
-  color: #20306b;
-  border-color: rgba(84, 101, 255, 0.3);
-  background: rgba(84, 101, 255, 0.14);
-}
-
-:root:not(.theme-dark) .undo-btn:hover {
-  background: rgba(84, 101, 255, 0.22);
 }
 
 @media (max-width: 640px) {
@@ -4897,8 +4841,7 @@ body,
 :root:not(.theme-dark) .empty-content,
 :root:not(.theme-dark) .push-toast,
 :root:not(.theme-dark) .pinned-banner,
-:root:not(.theme-dark) .selection-toolbar,
-:root:not(.theme-dark) .undo-item {
+:root:not(.theme-dark) .selection-toolbar {
   border-radius: var(--clay-lite-radius);
   border: 1px solid var(--clay-lite-border);
   background: linear-gradient(140deg, var(--clay-lite-surface), var(--clay-lite-surface-2)) !important;
@@ -4919,8 +4862,7 @@ body,
 :root:not(.theme-dark) .btn-primary,
 :root:not(.theme-dark) .btn-secondary,
 :root:not(.theme-dark) .action-button,
-:root:not(.theme-dark) .send-button,
-:root:not(.theme-dark) .undo-btn {
+:root:not(.theme-dark) .send-button {
   transition: transform var(--clay-lite-transition), box-shadow var(--clay-lite-transition), background var(--clay-lite-transition), border-color var(--clay-lite-transition);
 }
 
@@ -4942,8 +4884,7 @@ body,
 :root:not(.theme-dark) .btn-primary:hover,
 :root:not(.theme-dark) .btn-secondary:hover,
 :root:not(.theme-dark) .action-button:hover,
-:root:not(.theme-dark) .send-button:hover,
-:root:not(.theme-dark) .undo-btn:hover {
+:root:not(.theme-dark) .send-button:hover {
   transform: scale(1.02);
   box-shadow: var(--clay-lite-raised) !important;
 }
@@ -4955,8 +4896,7 @@ body,
 :root:not(.theme-dark) .action-button:active,
 :root:not(.theme-dark) .send-button:active,
 :root:not(.theme-dark) .chat-header-icon-btn:active,
-:root:not(.theme-dark) .chat-header-create-btn:active,
-:root:not(.theme-dark) .undo-btn:active {
+:root:not(.theme-dark) .chat-header-create-btn:active {
   box-shadow: var(--clay-lite-pressed) !important;
   transform: translateY(0);
 }
