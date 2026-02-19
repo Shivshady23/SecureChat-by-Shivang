@@ -11,11 +11,7 @@ import Message from "../models/Message.js";
 
 let ioInstance = null;
 const onlineUsers = new Map();
-const activeCalls = new Map();
-
-function randomCallId() {
-  return `call_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
+const socketCallRoomMap = new Map();
 
 function getUserSocketSet(userId) {
   const key = String(userId);
@@ -55,25 +51,39 @@ function emitToUser(userId, event, payload) {
   return true;
 }
 
-function isUserBusy(userId) {
-  const normalized = String(userId);
-  for (const call of activeCalls.values()) {
-    if (call.status === "ended") continue;
-    if (String(call.callerId) === normalized || String(call.calleeId) === normalized) {
+function getCallRoomMembers(roomId) {
+  if (!ioInstance || !roomId) return [];
+  const members = ioInstance.sockets.adapter.rooms.get(String(roomId));
+  return members ? Array.from(members) : [];
+}
+
+function leaveActiveCallRoom(socket, { reason = "leave-room", expectedRoomId = "" } = {}) {
+  const currentRoomId = String(socketCallRoomMap.get(socket.id) || "");
+  if (!currentRoomId) return "";
+  if (expectedRoomId && String(expectedRoomId) !== currentRoomId) return "";
+
+  socket.leave(currentRoomId);
+  socketCallRoomMap.delete(socket.id);
+
+  socket.to(currentRoomId).emit("peer-left", {
+    roomId: currentRoomId,
+    socketId: socket.id,
+    userId: String(socket.userId || ""),
+    reason
+  });
+
+  return currentRoomId;
+}
+
+function isUserInCall(userId) {
+  const sockets = onlineUsers.get(String(userId));
+  if (!sockets || sockets.size === 0) return false;
+  for (const socketId of sockets.values()) {
+    if (socketCallRoomMap.has(String(socketId))) {
       return true;
     }
   }
   return false;
-}
-
-function endCallSession(callId) {
-  const key = String(callId || "");
-  if (!key) return null;
-  const call = activeCalls.get(key);
-  if (!call) return null;
-  call.status = "ended";
-  activeCalls.delete(key);
-  return call;
 }
 
 async function ensureDirectChatMemberPair(chatId, callerId, calleeId) {
@@ -104,7 +114,7 @@ export function initSocket(server, { origin }) {
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = payload.id;
       return next();
-    } catch (err) {
+    } catch {
       return next(new Error("Unauthorized"));
     }
   });
@@ -118,178 +128,225 @@ export function initSocket(server, { origin }) {
 
     io.emit("presence", { online: Array.from(onlineUsers.keys()) });
 
-    socket.on("call-user", async (payload = {}) => {
+    socket.on("join-room", (payload = {}, ack) => {
+      const roomId = String(payload.roomId || "").trim();
+      const userName = String(payload.userName || "").trim();
+
+      if (!roomId) {
+        const error = { ok: false, error: "roomId is required" };
+        if (typeof ack === "function") ack(error);
+        socket.emit("call-error", { message: "roomId is required" });
+        return;
+      }
+
+      const activeRoomId = String(socketCallRoomMap.get(socket.id) || "");
+      if (activeRoomId && activeRoomId !== roomId) {
+        leaveActiveCallRoom(socket, { reason: "switch-room" });
+      }
+
+      if (activeRoomId === roomId) {
+        const peers = getCallRoomMembers(roomId).filter((id) => id !== socket.id);
+        const response = {
+          ok: true,
+          roomId,
+          socketId: socket.id,
+          isInitiator: peers.length === 0,
+          peers
+        };
+        if (typeof ack === "function") ack(response);
+        return;
+      }
+
+      const membersBeforeJoin = getCallRoomMembers(roomId);
+      if (membersBeforeJoin.length >= 2) {
+        socket.emit("room-full", { roomId });
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "room-full", roomId });
+        }
+        return;
+      }
+
+      socket.join(roomId);
+      socketCallRoomMap.set(socket.id, roomId);
+
+      const membersAfterJoin = getCallRoomMembers(roomId);
+      const peers = membersAfterJoin.filter((id) => id !== socket.id);
+      const isInitiator = membersAfterJoin.length === 1;
+
+      socket.to(roomId).emit("peer-joined", {
+        roomId,
+        socketId: socket.id,
+        userId: String(userId),
+        userName
+      });
+
+      socket.emit("room-joined", {
+        roomId,
+        socketId: socket.id,
+        isInitiator,
+        peers
+      });
+
+      if (typeof ack === "function") {
+        ack({
+          ok: true,
+          roomId,
+          socketId: socket.id,
+          isInitiator,
+          peers
+        });
+      }
+    });
+
+    socket.on("signal", (payload = {}) => {
+      const roomId = String(payload.roomId || socketCallRoomMap.get(socket.id) || "").trim();
+      const to = String(payload.to || "").trim();
+      const data = payload.data || {};
+      const dataType = String(data.type || "").trim();
+
+      if (!roomId || !["offer", "answer", "ice"].includes(dataType)) return;
+      if (String(socketCallRoomMap.get(socket.id) || "") !== roomId) return;
+
+      const outgoing = {
+        roomId,
+        from: socket.id,
+        fromUserId: String(userId),
+        to: to || undefined,
+        data
+      };
+
+      if (to) {
+        const roomMembers = getCallRoomMembers(roomId);
+        if (!roomMembers.includes(to)) {
+          socket.emit("call-error", { message: "Signal target is not in this room." });
+          return;
+        }
+        io.to(to).emit("signal", outgoing);
+        return;
+      }
+
+      socket.to(roomId).emit("signal", outgoing);
+    });
+
+    socket.on("leave-room", (payload = {}, ack) => {
+      const roomId = String(payload.roomId || "").trim();
+      const leftRoomId = leaveActiveCallRoom(socket, {
+        reason: "leave-room",
+        expectedRoomId: roomId || ""
+      });
+      if (typeof ack === "function") {
+        ack({
+          ok: Boolean(leftRoomId),
+          roomId: leftRoomId || roomId
+        });
+      }
+    });
+
+    socket.on("call-invite", async (payload = {}) => {
       try {
         const callerId = String(userId);
-        const calleeId = String(payload.toUserId || "");
-        const chatId = String(payload.chatId || "");
+        const calleeId = String(payload.toUserId || "").trim();
+        const chatId = String(payload.chatId || "").trim();
+        const roomId = String(payload.roomId || "").trim();
         const callType = payload.callType === "video" ? "video" : "voice";
-        const offer = payload.offer || null;
-        const timeoutMs = Math.max(5000, Math.min(120000, Number(payload.timeoutMs || 30000)));
 
-        if (!calleeId || !chatId || !offer) {
-          socket.emit("call-error", { message: "Invalid call payload" });
+        if (!calleeId || !chatId || !roomId) {
+          socket.emit("call-error", { message: "Invalid call invite payload." });
           return;
         }
         if (calleeId === callerId) {
-          socket.emit("call-error", { message: "Cannot call yourself" });
+          socket.emit("call-error", { message: "Cannot call yourself." });
           return;
         }
 
-        const isAllowed = await ensureDirectChatMemberPair(chatId, callerId, calleeId);
-        if (!isAllowed) {
-          socket.emit("call-error", { message: "Unauthorized call target" });
+        const allowed = await ensureDirectChatMemberPair(chatId, callerId, calleeId);
+        if (!allowed) {
+          socket.emit("call-error", { message: "Unauthorized call target." });
           return;
         }
 
-        if (isUserBusy(callerId)) {
-          socket.emit("busy", { userId: callerId, reason: "caller-in-call" });
-          return;
-        }
-        if (isUserBusy(calleeId)) {
-          socket.emit("busy", { userId: calleeId, reason: "callee-in-call" });
+        if (isUserInCall(calleeId)) {
+          socket.emit("busy", { userId: calleeId, reason: "callee-in-call", roomId });
           return;
         }
 
         const calleeSocketId = getPrimarySocketId(calleeId);
         if (!calleeSocketId) {
-          socket.emit("call-rejected", { reason: "offline", callId: "" });
+          socket.emit("call-rejected", {
+            roomId,
+            byUserId: calleeId,
+            reason: "offline"
+          });
           return;
         }
 
-        const requestedCallId = String(payload.callId || "").trim();
-        const callId =
-          requestedCallId && !activeCalls.has(requestedCallId)
-            ? requestedCallId
-            : randomCallId();
-        const callSession = {
-          callId,
-          chatId,
-          callerId,
-          calleeId,
-          callType,
-          status: "calling",
-          startedAt: Date.now(),
-          timeoutMs
-        };
-        activeCalls.set(callId, callSession);
-
-        io.to(calleeSocketId).emit("incoming-call", {
-          callId,
+        emitToUser(calleeId, "incoming-call", {
+          roomId,
           chatId,
           fromUserId: callerId,
           fromSocketId: socket.id,
-          toSocketId: calleeSocketId,
           callType,
-          offer,
-          timeoutMs
+          startedAt: Date.now()
         });
 
         socket.emit("calling", {
-          callId,
+          roomId,
+          chatId,
           toUserId: calleeId,
           toSocketId: calleeSocketId,
-          callType,
-          timeoutMs
+          callType
         });
       } catch (err) {
-        socket.emit("call-error", { message: err?.message || "Failed to initiate call" });
+        socket.emit("call-error", { message: err?.message || "Failed to invite user for call." });
       }
     });
 
-    socket.on("answer-call", async (payload = {}) => {
-      try {
-        const callId = String(payload.callId || "");
-        const answer = payload.answer || null;
-        const call = activeCalls.get(callId);
-        if (!call) {
-          socket.emit("call-error", { message: "Call not found" });
-          return;
-        }
-        if (String(call.calleeId) !== String(userId)) {
-          socket.emit("call-error", { message: "Unauthorized call answer" });
-          return;
-        }
-        if (!answer) {
-          socket.emit("call-error", { message: "Missing WebRTC answer" });
-          return;
-        }
-        call.status = "accepted";
-        call.acceptedAt = Date.now();
-
-        emitToUser(call.callerId, "answer-call", {
-          callId,
-          fromUserId: String(userId),
-          fromSocketId: socket.id,
-          answer
-        });
-        emitToUser(call.calleeId, "call-accepted", {
-          callId,
-          byUserId: String(userId)
-        });
-      } catch (err) {
-        socket.emit("call-error", { message: err?.message || "Failed to answer call" });
-      }
-    });
-
-    socket.on("ice-candidate", (payload = {}) => {
-      const callId = String(payload.callId || "");
-      const toUserId = String(payload.toUserId || "");
-      const toSocketId = String(payload.toSocketId || "");
-      const candidate = payload.candidate || null;
-      const call = activeCalls.get(callId);
-      if (!call || !candidate) return;
-
-      const me = String(userId);
-      const allowed =
-        (String(call.callerId) === me && String(call.calleeId) === toUserId) ||
-        (String(call.calleeId) === me && String(call.callerId) === toUserId);
-      if (!allowed) return;
-
-      const payloadBase = {
-        callId,
-        fromUserId: me,
-        fromSocketId: socket.id,
-        candidate
-      };
-
-      if (toSocketId) {
-        io.to(toSocketId).emit("ice-candidate", payloadBase);
-        return;
-      }
-      emitToUser(toUserId, "ice-candidate", payloadBase);
+    socket.on("call-accepted", (payload = {}) => {
+      const roomId = String(payload.roomId || "").trim();
+      const toUserId = String(payload.toUserId || "").trim();
+      if (!roomId || !toUserId) return;
+      emitToUser(toUserId, "call-accepted", {
+        roomId,
+        byUserId: String(userId),
+        bySocketId: socket.id
+      });
     });
 
     socket.on("call-rejected", (payload = {}) => {
-      const callId = String(payload.callId || "");
+      const roomId = String(payload.roomId || "").trim();
+      const toUserId = String(payload.toUserId || "").trim();
       const reason = String(payload.reason || "rejected");
-      const call = activeCalls.get(callId);
-      if (!call) return;
-      if (String(call.calleeId) !== String(userId)) return;
-      endCallSession(callId);
-      emitToUser(call.callerId, "call-rejected", {
-        callId,
+      if (!roomId || !toUserId) return;
+      emitToUser(toUserId, "call-rejected", {
+        roomId,
         byUserId: String(userId),
         reason
       });
     });
 
     socket.on("end-call", (payload = {}) => {
-      const callId = String(payload.callId || "");
+      const roomId = String(payload.roomId || "").trim();
+      const toUserId = String(payload.toUserId || "").trim();
       const reason = String(payload.reason || "ended");
-      const call = activeCalls.get(callId);
-      if (!call) return;
-      const me = String(userId);
-      const isParticipant = String(call.callerId) === me || String(call.calleeId) === me;
-      if (!isParticipant) return;
-      endCallSession(callId);
-      const targetUserId = String(call.callerId) === me ? String(call.calleeId) : String(call.callerId);
-      emitToUser(targetUserId, "end-call", {
-        callId,
-        byUserId: me,
+
+      leaveActiveCallRoom(socket, {
+        reason: `end-call:${reason}`,
+        expectedRoomId: roomId || ""
+      });
+
+      if (toUserId) {
+        emitToUser(toUserId, "end-call", {
+          roomId,
+          byUserId: String(userId),
+          reason
+        });
+      }
+
+      socket.emit("end-call", {
+        roomId,
+        byUserId: String(userId),
         reason
       });
-      socket.emit("end-call", { callId, byUserId: me, reason });
     });
 
     socket.on("typing", ({ chatId, isTyping }) => {
@@ -334,24 +391,11 @@ export function initSocket(server, { origin }) {
     });
 
     socket.on("disconnect", () => {
+      leaveActiveCallRoom(socket, { reason: "disconnect" });
       removeOnlineSocket(userId, socket.id);
-      const myUserId = String(userId);
-      for (const [callId, call] of activeCalls.entries()) {
-        const isParticipant =
-          String(call.callerId) === myUserId || String(call.calleeId) === myUserId;
-        if (!isParticipant) continue;
-        endCallSession(callId);
-        const peerId = String(call.callerId) === myUserId ? String(call.calleeId) : String(call.callerId);
-        emitToUser(peerId, "end-call", {
-          callId,
-          byUserId: myUserId,
-          reason: "disconnect"
-        });
-      }
       io.emit("presence", { online: Array.from(onlineUsers.keys()) });
     });
   });
 
   ioInstance = io;
 }
-

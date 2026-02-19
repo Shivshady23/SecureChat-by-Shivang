@@ -5,22 +5,30 @@
 // - Main module logic and exports
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
-    // Optional TURN placeholder:
-    // { urls: "turn:turn.example.com:3478", username: "user", credential: "pass" }
-  ]
-};
+import { TURN_CREDENTIAL, TURN_URL, TURN_USERNAME } from "../services/runtimeConfig.js";
 
 const CALL_TIMEOUT_MS = 30000;
+
+function buildRtcConfig() {
+  const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+  if (TURN_URL) {
+    iceServers.push({
+      urls: TURN_URL,
+      username: TURN_USERNAME || "",
+      credential: TURN_CREDENTIAL || ""
+    });
+  }
+  return { iceServers };
+}
+
+const RTC_CONFIG = buildRtcConfig();
 
 const INITIAL_STATE = {
   status: "idle",
   mode: "voice",
   callId: "",
   chatId: "",
+  roomId: "",
   peerUserId: "",
   peerSocketId: "",
   incomingOffer: null,
@@ -43,8 +51,8 @@ function permissionErrorMessage(err) {
   return err?.message || "Unable to access media devices.";
 }
 
-function createCallId() {
-  return `call_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+function makeRoomId(chatId) {
+  return `call:${String(chatId || "").trim()}`;
 }
 
 export function useCallManager({ socket, currentUserId, selectedChatId, selectedPeerUserId }) {
@@ -59,9 +67,18 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const timeoutRef = useRef(null);
+  const pendingIceRef = useRef([]);
+  const isInitiatorRef = useRef(false);
+  const isRestartingRef = useRef(false);
   const audioMonitorRef = useRef({ rafId: 0, ctx: null, analyser: null, source: null });
 
   const isBusy = !["idle", "ended"].includes(callState.status);
+  const myUserId = String(currentUserId || "");
+
+  const log = useCallback((label, details = null) => {
+    if (details) console.info("[call]", label, details);
+    else console.info("[call]", label);
+  }, []);
 
   const clearCallTimeout = useCallback(() => {
     if (timeoutRef.current) {
@@ -114,6 +131,14 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
     [stopSpeakingMonitor]
   );
 
+  const updateCallState = useCallback((next) => {
+    setCallState((prev) => {
+      const merged = { ...prev, ...next };
+      callStateRef.current = merged;
+      return merged;
+    });
+  }, []);
+
   const stopLocalStream = useCallback(() => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -126,38 +151,49 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
 
   const closePeerConnection = useCallback(() => {
     if (pcRef.current) {
-      pcRef.current.ontrack = null;
-      pcRef.current.onicecandidate = null;
-      pcRef.current.onconnectionstatechange = null;
       try {
+        pcRef.current.ontrack = null;
+        pcRef.current.onicecandidate = null;
+        pcRef.current.onconnectionstatechange = null;
         pcRef.current.close();
       } catch {}
     }
     pcRef.current = null;
+    pendingIceRef.current = [];
     setRemoteStream(null);
     stopSpeakingMonitor();
   }, [stopSpeakingMonitor]);
 
-  const updateCallState = useCallback((next) => {
-    setCallState((prev) => {
-      const merged = { ...prev, ...next };
-      callStateRef.current = merged;
-      return merged;
-    });
-  }, []);
+  const emitLeaveRoom = useCallback(
+    (roomId) => {
+      const normalized = String(roomId || "").trim();
+      if (!socket || !normalized) return;
+      socket.emit("leave-room", { roomId: normalized });
+    },
+    [socket]
+  );
 
-  const resetCall = useCallback(() => {
-    clearCallTimeout();
-    closePeerConnection();
-    stopLocalStream();
-    updateCallState({ ...INITIAL_STATE, status: "idle" });
-  }, [clearCallTimeout, closePeerConnection, stopLocalStream, updateCallState]);
+  const hardReset = useCallback(
+    ({ leaveRoom = true } = {}) => {
+      const currentRoomId = String(callStateRef.current.roomId || "").trim();
+      clearCallTimeout();
+      if (leaveRoom) {
+        emitLeaveRoom(currentRoomId);
+      }
+      closePeerConnection();
+      stopLocalStream();
+      isInitiatorRef.current = false;
+      updateCallState({ ...INITIAL_STATE, status: "idle" });
+    },
+    [clearCallTimeout, closePeerConnection, emitLeaveRoom, stopLocalStream, updateCallState]
+  );
 
   const createPeerConnection = useCallback(
-    ({ targetUserId, targetSocketId, callId }) => {
+    ({ roomId }) => {
       closePeerConnection();
       const pc = new RTCPeerConnection(RTC_CONFIG);
       pcRef.current = pc;
+      pendingIceRef.current = [];
 
       pc.ontrack = (event) => {
         const [stream] = event.streams || [];
@@ -168,24 +204,58 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
 
       pc.onicecandidate = (event) => {
         if (!event.candidate || !socket) return;
-        socket.emit("ice-candidate", {
-          callId,
-          toUserId: targetUserId,
-          toSocketId: targetSocketId || "",
-          candidate: event.candidate
+        const current = callStateRef.current;
+        socket.emit("signal", {
+          roomId,
+          to: current.peerSocketId || undefined,
+          data: {
+            type: "ice",
+            candidate: event.candidate
+          }
         });
+        log("sent signal:ice", { roomId, to: current.peerSocketId || "broadcast" });
       };
 
       pc.onconnectionstatechange = () => {
-        const state = pc.connectionState;
-        if (["failed", "disconnected", "closed"].includes(state)) {
-          updateCallState({ status: "ended" });
+        const state = String(pc.connectionState || "");
+        log("pc connection state", { state });
+        if (state === "failed") {
+          updateCallState({ error: "Connection failed. Retrying..." });
+          setTimeout(() => {
+            const current = callStateRef.current;
+            if (!["calling", "accepted"].includes(current.status)) return;
+            if (!isRestartingRef.current) {
+              isRestartingRef.current = true;
+              pc
+                .createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: current.mode === "video",
+                  iceRestart: true
+                })
+                .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+                .then((offer) => {
+                  if (!socket) return;
+                  socket.emit("signal", {
+                    roomId,
+                    to: current.peerSocketId || undefined,
+                    data: {
+                      type: "offer",
+                      sdp: offer
+                    }
+                  });
+                })
+                .catch((err) => log("restart offer failed", { message: err?.message || "unknown" }))
+                .finally(() => {
+                  isRestartingRef.current = false;
+                });
+            }
+          }, 300);
         }
       };
 
       return pc;
     },
-    [closePeerConnection, socket, startSpeakingMonitor, updateCallState]
+    [closePeerConnection, log, socket, startSpeakingMonitor, updateCallState]
   );
 
   const getMediaStream = useCallback(async (mode) => {
@@ -196,21 +266,94 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
     return stream;
   }, []);
 
+  const flushPendingIceCandidates = useCallback(async () => {
+    const pc = pcRef.current;
+    if (!pc || !pc.remoteDescription) return;
+    const queued = pendingIceRef.current.splice(0);
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        log("failed to apply queued ice", { message: err?.message || "unknown" });
+      }
+    }
+  }, [log]);
+
+  const joinCallRoom = useCallback(
+    (roomId) =>
+      new Promise((resolve, reject) => {
+        if (!socket) {
+          reject(new Error("Socket not connected"));
+          return;
+        }
+        const normalized = String(roomId || "").trim();
+        if (!normalized) {
+          reject(new Error("Invalid room ID"));
+          return;
+        }
+        socket.emit("join-room", { roomId: normalized }, (response) => {
+          if (!response || response.ok === false) {
+            reject(new Error(response?.error || "Failed to join room"));
+            return;
+          }
+          resolve(response);
+        });
+      }),
+    [socket]
+  );
+
+  const createAndSendOffer = useCallback(
+    async ({ iceRestart = false } = {}) => {
+      const current = callStateRef.current;
+      const roomId = String(current.roomId || "").trim();
+      const pc = pcRef.current;
+      if (!socket || !pc || !roomId) return;
+
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: current.mode === "video",
+        iceRestart: Boolean(iceRestart)
+      });
+      await pc.setLocalDescription(offer);
+
+      socket.emit("signal", {
+        roomId,
+        to: current.peerSocketId || undefined,
+        data: {
+          type: "offer",
+          sdp: offer
+        }
+      });
+      log("sent signal:offer", {
+        roomId,
+        to: current.peerSocketId || "broadcast",
+        iceRestart: Boolean(iceRestart)
+      });
+    },
+    [log, socket]
+  );
+
   const endCall = useCallback(
     ({ reason = "ended", emit = true } = {}) => {
-      const { callId } = callStateRef.current;
-      if (emit && socket && callId) {
-        socket.emit("end-call", { callId, reason });
+      const current = callStateRef.current;
+      const roomId = String(current.roomId || "").trim();
+      if (emit && socket && roomId) {
+        socket.emit("end-call", {
+          roomId,
+          toUserId: current.peerUserId || "",
+          reason
+        });
       }
-      clearCallTimeout();
-      closePeerConnection();
-      stopLocalStream();
-      updateCallState({ ...INITIAL_STATE, status: "ended" });
+
+      hardReset({ leaveRoom: true });
+      updateCallState({ ...INITIAL_STATE, status: "ended", error: "" });
       setTimeout(() => {
-        updateCallState({ ...INITIAL_STATE, status: "idle" });
+        if (callStateRef.current.status === "ended") {
+          updateCallState({ ...INITIAL_STATE, status: "idle" });
+        }
       }, 800);
     },
-    [clearCallTimeout, closePeerConnection, socket, stopLocalStream, updateCallState]
+    [hardReset, socket, updateCallState]
   );
 
   const startCall = useCallback(
@@ -218,6 +361,8 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
       if (!socket) return;
       const peerUserId = String(selectedPeerUserId || "");
       const chatId = String(selectedChatId || "");
+      const roomId = makeRoomId(chatId);
+
       if (!peerUserId || !chatId) {
         updateCallState({ error: "Select a direct chat to start call." });
         return;
@@ -228,59 +373,79 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
       }
 
       try {
-        const callId = createCallId();
+        hardReset({ leaveRoom: true });
+
         updateCallState({
           ...INITIAL_STATE,
           status: "calling",
           mode,
-          peerUserId,
+          callId: roomId,
+          roomId,
           chatId,
-          callId,
-          startedAt: Date.now()
+          peerUserId,
+          startedAt: Date.now(),
+          error: ""
         });
 
         const stream = await getMediaStream(mode);
-        const pc = createPeerConnection({ targetUserId: peerUserId, callId });
+        const pc = createPeerConnection({ roomId });
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: mode === "video"
-        });
-        await pc.setLocalDescription(offer);
+        const joinResponse = await joinCallRoom(roomId);
+        isInitiatorRef.current = Boolean(joinResponse?.isInitiator);
+        const peerSocketId = String(joinResponse?.peers?.[0] || "");
 
-        socket.emit("call-user", {
-          callId,
-          toUserId: peerUserId,
-          chatId,
-          callType: mode,
-          offer,
-          timeoutMs: CALL_TIMEOUT_MS
+        updateCallState({
+          peerSocketId,
+          status: "calling",
+          roomId
         });
+
+        socket.emit("call-invite", {
+          roomId,
+          chatId,
+          toUserId: peerUserId,
+          callType: mode
+        });
+        log("call invite sent", { roomId, toUserId: peerUserId, isInitiator: isInitiatorRef.current });
+
+        if (peerSocketId && isInitiatorRef.current) {
+          await createAndSendOffer({ iceRestart: false });
+        }
 
         clearCallTimeout();
         timeoutRef.current = setTimeout(() => {
           const current = callStateRef.current;
           if (current.status === "calling") {
             endCall({ reason: "timeout", emit: true });
-            updateCallState({ ...INITIAL_STATE, status: "ended", error: "Call timed out." });
+            updateCallState({
+              ...INITIAL_STATE,
+              status: "ended",
+              error: "Call timed out."
+            });
           }
         }, CALL_TIMEOUT_MS);
       } catch (err) {
-        endCall({ reason: "error", emit: false });
+        log("start call failed", { message: err?.message || "unknown" });
+        hardReset({ leaveRoom: true });
         updateCallState({
           ...INITIAL_STATE,
           status: "ended",
           error: permissionErrorMessage(err)
         });
+        setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 800);
       }
     },
     [
       clearCallTimeout,
+      createAndSendOffer,
       createPeerConnection,
       endCall,
       getMediaStream,
+      hardReset,
       isBusy,
+      joinCallRoom,
+      log,
       selectedChatId,
       selectedPeerUserId,
       socket,
@@ -289,49 +454,62 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
   );
 
   const acceptIncomingCall = useCallback(async () => {
-    if (!socket) return;
     const current = callStateRef.current;
-    if (current.status !== "incoming" || !current.incomingOffer || !current.callId) return;
+    if (!socket || current.status !== "incoming") return;
 
     try {
       updateCallState({ status: "accepted", error: "", acceptedAt: Date.now() });
       const stream = await getMediaStream(current.mode);
-      const pc = createPeerConnection({
-        targetUserId: current.peerUserId,
-        targetSocketId: current.peerSocketId,
-        callId: current.callId
-      });
+      const pc = createPeerConnection({ roomId: current.roomId });
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      await pc.setRemoteDescription(new RTCSessionDescription(current.incomingOffer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      socket.emit("answer-call", {
-        callId: current.callId,
-        answer
+      const joinResponse = await joinCallRoom(current.roomId);
+      isInitiatorRef.current = Boolean(joinResponse?.isInitiator);
+      const peerSocketId = String(joinResponse?.peers?.[0] || current.peerSocketId || "");
+      updateCallState({
+        status: "accepted",
+        peerSocketId,
+        acceptedAt: Date.now()
       });
+
+      socket.emit("call-accepted", {
+        roomId: current.roomId,
+        toUserId: current.peerUserId
+      });
+      log("incoming call accepted", { roomId: current.roomId, isInitiator: isInitiatorRef.current });
+
+      if (peerSocketId && isInitiatorRef.current) {
+        await createAndSendOffer({ iceRestart: false });
+      }
     } catch (err) {
+      log("accept call failed", { message: err?.message || "unknown" });
       socket.emit("call-rejected", {
-        callId: current.callId,
+        roomId: current.roomId,
+        toUserId: current.peerUserId,
         reason: "media-error"
       });
-      endCall({ reason: "error", emit: false });
+      hardReset({ leaveRoom: true });
       updateCallState({
         ...INITIAL_STATE,
         status: "ended",
         error: permissionErrorMessage(err)
       });
+      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 800);
     }
-  }, [createPeerConnection, endCall, getMediaStream, socket, updateCallState]);
+  }, [createAndSendOffer, createPeerConnection, getMediaStream, hardReset, joinCallRoom, log, socket, updateCallState]);
 
   const rejectIncomingCall = useCallback(() => {
-    const { callId } = callStateRef.current;
-    if (socket && callId) {
-      socket.emit("call-rejected", { callId, reason: "rejected" });
+    const current = callStateRef.current;
+    if (socket && current.roomId && current.peerUserId) {
+      socket.emit("call-rejected", {
+        roomId: current.roomId,
+        toUserId: current.peerUserId,
+        reason: "rejected"
+      });
     }
-    endCall({ reason: "rejected", emit: false });
-  }, [endCall, socket]);
+    hardReset({ leaveRoom: true });
+    updateCallState({ ...INITIAL_STATE, status: "idle" });
+  }, [hardReset, socket, updateCallState]);
 
   const toggleMute = useCallback(() => {
     const stream = localStreamRef.current;
@@ -358,73 +536,168 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
   useEffect(() => {
     if (!socket) return undefined;
 
-    const onCalling = ({ callId, toUserId, toSocketId, callType }) => {
-      const current = callStateRef.current;
+    const onRoomFull = ({ roomId }) => {
+      if (String(callStateRef.current.roomId || "") !== String(roomId || "")) return;
+      hardReset({ leaveRoom: false });
       updateCallState({
-        ...current,
-        callId: String(callId || ""),
-        peerUserId: String(toUserId || current.peerUserId || ""),
+        ...INITIAL_STATE,
+        status: "ended",
+        error: "Call room is full."
+      });
+      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 800);
+    };
+
+    const onCalling = ({ roomId, toUserId, toSocketId, callType }) => {
+      updateCallState({
+        roomId: String(roomId || ""),
+        peerUserId: String(toUserId || callStateRef.current.peerUserId || ""),
         peerSocketId: String(toSocketId || ""),
-        mode: callType === "video" ? "video" : current.mode
+        mode: callType === "video" ? "video" : callStateRef.current.mode,
+        status: "calling"
       });
     };
 
-    const onIncomingCall = ({ callId, chatId, fromUserId, fromSocketId, callType, offer }) => {
+    const onIncomingCall = ({ roomId, chatId, fromUserId, fromSocketId, callType }) => {
       const current = callStateRef.current;
       if (!["idle", "ended"].includes(current.status)) {
-        socket.emit("busy", { userId: String(currentUserId || "") });
-        socket.emit("call-rejected", { callId, reason: "busy" });
+        socket.emit("call-rejected", {
+          roomId,
+          toUserId: fromUserId,
+          reason: "busy"
+        });
         return;
       }
       updateCallState({
         ...INITIAL_STATE,
         status: "incoming",
-        callId: String(callId || ""),
+        callId: String(roomId || ""),
+        roomId: String(roomId || ""),
         chatId: String(chatId || ""),
         peerUserId: String(fromUserId || ""),
         peerSocketId: String(fromSocketId || ""),
         mode: callType === "video" ? "video" : "voice",
-        incomingOffer: offer || null,
         startedAt: Date.now()
       });
+      log("incoming call", { roomId, fromUserId, toUserId: myUserId });
     };
 
-    const onAnswerCall = async ({ callId, answer }) => {
+    const onCallAccepted = async ({ roomId, byUserId, bySocketId }) => {
       const current = callStateRef.current;
-      if (String(current.callId) !== String(callId) || !pcRef.current || !answer) return;
-      await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+      if (String(current.roomId) !== String(roomId || "")) return;
       clearCallTimeout();
-      updateCallState({ status: "accepted", acceptedAt: Date.now() });
+      updateCallState({
+        status: "accepted",
+        peerUserId: String(byUserId || current.peerUserId || ""),
+        peerSocketId: String(bySocketId || current.peerSocketId || ""),
+        acceptedAt: Date.now()
+      });
+      if (pcRef.current && isInitiatorRef.current) {
+        await createAndSendOffer({ iceRestart: false }).catch((err) =>
+          log("offer after accept failed", { message: err?.message || "unknown" })
+        );
+      }
     };
 
-    const onIceCandidate = async ({ callId, candidate }) => {
+    const onPeerJoined = async ({ roomId, socketId, userId }) => {
       const current = callStateRef.current;
-      if (String(current.callId) !== String(callId) || !candidate || !pcRef.current) return;
-      try {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch {}
+      if (String(current.roomId) !== String(roomId || "")) return;
+      updateCallState({
+        peerSocketId: String(socketId || current.peerSocketId || ""),
+        peerUserId: String(userId || current.peerUserId || "")
+      });
+      log("peer joined", { roomId, socketId });
+      if (isInitiatorRef.current && pcRef.current) {
+        await createAndSendOffer({ iceRestart: false }).catch((err) =>
+          log("offer on peer-joined failed", { message: err?.message || "unknown" })
+        );
+      }
     };
 
-    const onCallRejected = ({ callId, reason }) => {
-      if (String(callStateRef.current.callId) !== String(callId)) return;
-      endCall({ reason: reason || "rejected", emit: false });
+    const onSignal = async ({ roomId, from, fromUserId, data }) => {
+      const current = callStateRef.current;
+      if (String(current.roomId) !== String(roomId || "")) return;
+      const type = String(data?.type || "");
+      if (!["offer", "answer", "ice"].includes(type)) return;
+      if (!pcRef.current) {
+        log("signal ignored - no peer connection", { type });
+        return;
+      }
+
+      updateCallState({
+        peerSocketId: String(from || current.peerSocketId || ""),
+        peerUserId: String(fromUserId || current.peerUserId || "")
+      });
+      log("received signal", { type, from });
+
+      try {
+        if (type === "offer") {
+          const offerSdp = data?.sdp;
+          if (!offerSdp) return;
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(offerSdp));
+          await flushPendingIceCandidates();
+          const answer = await pcRef.current.createAnswer();
+          await pcRef.current.setLocalDescription(answer);
+          socket.emit("signal", {
+            roomId: current.roomId,
+            to: from,
+            data: {
+              type: "answer",
+              sdp: answer
+            }
+          });
+          updateCallState({ status: "accepted", acceptedAt: Date.now() });
+          return;
+        }
+
+        if (type === "answer") {
+          const answerSdp = data?.sdp;
+          if (!answerSdp) return;
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(answerSdp));
+          await flushPendingIceCandidates();
+          clearCallTimeout();
+          updateCallState({ status: "accepted", acceptedAt: Date.now() });
+          return;
+        }
+
+        if (type === "ice") {
+          const candidate = data?.candidate;
+          if (!candidate) return;
+          if (!pcRef.current.remoteDescription) {
+            pendingIceRef.current.push(candidate);
+            return;
+          }
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      } catch (err) {
+        log("signal handling failed", { type, message: err?.message || "unknown" });
+      }
+    };
+
+    const onPeerLeft = ({ roomId }) => {
+      if (String(callStateRef.current.roomId) !== String(roomId || "")) return;
+      endCall({ reason: "peer-left", emit: false });
+    };
+
+    const onCallRejected = ({ roomId, reason }) => {
+      if (String(callStateRef.current.roomId) !== String(roomId || "")) return;
+      hardReset({ leaveRoom: true });
       updateCallState({
         ...INITIAL_STATE,
-        status: "rejected",
+        status: "ended",
         error: reason === "offline" ? "User is offline." : "Call rejected."
       });
-      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 900);
+      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 800);
     };
 
     const onBusy = ({ userId }) => {
       if (String(callStateRef.current.peerUserId || "") !== String(userId || "")) return;
-      endCall({ reason: "busy", emit: false });
-      updateCallState({ ...INITIAL_STATE, status: "busy", error: "User is busy." });
-      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 900);
+      hardReset({ leaveRoom: true });
+      updateCallState({ ...INITIAL_STATE, status: "ended", error: "User is busy." });
+      setTimeout(() => updateCallState({ ...INITIAL_STATE, status: "idle" }), 800);
     };
 
-    const onEndCall = ({ callId }) => {
-      if (String(callStateRef.current.callId) !== String(callId)) return;
+    const onEndCall = ({ roomId }) => {
+      if (roomId && String(callStateRef.current.roomId || "") !== String(roomId || "")) return;
       endCall({ reason: "ended", emit: false });
     };
 
@@ -432,26 +705,62 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
       updateCallState({ error: String(message || "Call error") });
     };
 
+    const onSocketConnect = async () => {
+      const current = callStateRef.current;
+      if (!current.roomId || !["calling", "accepted"].includes(current.status)) return;
+      try {
+        const joined = await joinCallRoom(current.roomId);
+        isInitiatorRef.current = Boolean(joined?.isInitiator);
+        updateCallState({
+          peerSocketId: String(joined?.peers?.[0] || current.peerSocketId || "")
+        });
+        if (isInitiatorRef.current && joined?.peers?.[0] && pcRef.current) {
+          await createAndSendOffer({ iceRestart: true });
+        }
+      } catch (err) {
+        log("rejoin failed", { message: err?.message || "unknown" });
+      }
+    };
+
+    socket.on("room-full", onRoomFull);
     socket.on("calling", onCalling);
     socket.on("incoming-call", onIncomingCall);
-    socket.on("answer-call", onAnswerCall);
-    socket.on("ice-candidate", onIceCandidate);
+    socket.on("call-accepted", onCallAccepted);
+    socket.on("peer-joined", onPeerJoined);
+    socket.on("signal", onSignal);
+    socket.on("peer-left", onPeerLeft);
     socket.on("call-rejected", onCallRejected);
     socket.on("busy", onBusy);
     socket.on("end-call", onEndCall);
     socket.on("call-error", onCallError);
+    socket.on("connect", onSocketConnect);
 
     return () => {
+      socket.off("room-full", onRoomFull);
       socket.off("calling", onCalling);
       socket.off("incoming-call", onIncomingCall);
-      socket.off("answer-call", onAnswerCall);
-      socket.off("ice-candidate", onIceCandidate);
+      socket.off("call-accepted", onCallAccepted);
+      socket.off("peer-joined", onPeerJoined);
+      socket.off("signal", onSignal);
+      socket.off("peer-left", onPeerLeft);
       socket.off("call-rejected", onCallRejected);
       socket.off("busy", onBusy);
       socket.off("end-call", onEndCall);
       socket.off("call-error", onCallError);
+      socket.off("connect", onSocketConnect);
     };
-  }, [clearCallTimeout, currentUserId, endCall, socket, updateCallState]);
+  }, [
+    clearCallTimeout,
+    createAndSendOffer,
+    endCall,
+    flushPendingIceCandidates,
+    hardReset,
+    joinCallRoom,
+    log,
+    myUserId,
+    socket,
+    updateCallState
+  ]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -459,9 +768,9 @@ export function useCallManager({ socket, currentUserId, selectedChatId, selected
 
   useEffect(() => {
     return () => {
-      resetCall();
+      hardReset({ leaveRoom: true });
     };
-  }, [resetCall]);
+  }, [hardReset]);
 
   const controls = useMemo(
     () => ({

@@ -59,5 +59,8 @@ export const API_BASE = resolveBackendBase(process.env.REACT_APP_API_BASE);
 export const SOCKET_URL = resolveBackendBase(
   process.env.REACT_APP_SOCKET_URL || process.env.REACT_APP_API_BASE
 );
+export const TURN_URL = String(process.env.REACT_APP_TURN_URL || "").trim();
+export const TURN_USERNAME = String(process.env.REACT_APP_TURN_USERNAME || "").trim();
+export const TURN_CREDENTIAL = String(process.env.REACT_APP_TURN_CREDENTIAL || "").trim();
 
 
