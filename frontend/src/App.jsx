@@ -4,14 +4,15 @@
 // - Helper functions/state handling
 // - Main module logic and exports
 
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import Login from "./pages/Login.jsx";
-import Register from "./pages/Register.jsx";
-import Chat from "./pages/Chat.jsx";
-import EditProfile from "./pages/EditProfile.jsx";
-import Landing from "./pages/Landing.jsx";
 import { getToken, getTheme } from "./services/storage.js";
+
+const Login = lazy(() => import("./pages/Login.jsx"));
+const Register = lazy(() => import("./pages/Register.jsx"));
+const Chat = lazy(() => import("./pages/Chat.jsx"));
+const EditProfile = lazy(() => import("./pages/EditProfile.jsx"));
+const Landing = lazy(() => import("./pages/Landing.jsx"));
 
 export default function App() {
   const location = useLocation();
@@ -65,15 +66,17 @@ export default function App() {
   return (
     <div className={`route-transition-root ${routeTransitionState}`}>
       <div key={displayPath} className="route-transition-view">
-        <Routes location={displayLocation}>
-          <Route path="/" element={<Navigate to={token ? "/chat" : "/welcome"} replace />} />
-          <Route path="/welcome" element={token ? <Navigate to="/chat" replace /> : <Landing />} />
-          <Route path="/login" element={token ? <Navigate to="/chat" replace /> : <Login />} />
-          <Route path="/register" element={token ? <Navigate to="/chat" replace /> : <Register />} />
-          <Route path="/chat" element={token ? <Chat /> : <Navigate to="/welcome" replace />} />
-          <Route path="/profile/edit" element={token ? <EditProfile /> : <Navigate to="/welcome" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<div className="page-loader">Loading...</div>}>
+          <Routes location={displayLocation}>
+            <Route path="/" element={<Navigate to={token ? "/chat" : "/welcome"} replace />} />
+            <Route path="/welcome" element={token ? <Navigate to="/chat" replace /> : <Landing />} />
+            <Route path="/login" element={token ? <Navigate to="/chat" replace /> : <Login />} />
+            <Route path="/register" element={token ? <Navigate to="/chat" replace /> : <Register />} />
+            <Route path="/chat" element={token ? <Chat /> : <Navigate to="/welcome" replace />} />
+            <Route path="/profile/edit" element={token ? <EditProfile /> : <Navigate to="/welcome" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </div>
     </div>
   );

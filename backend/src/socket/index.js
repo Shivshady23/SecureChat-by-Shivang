@@ -71,6 +71,12 @@ function leaveActiveCallRoom(socket, { reason = "leave-room", expectedRoomId = "
     userId: String(socket.userId || ""),
     reason
   });
+  socket.to(currentRoomId).emit("call-peer-left", {
+    roomId: currentRoomId,
+    socketId: socket.id,
+    userId: String(socket.userId || ""),
+    reason
+  });
 
   return currentRoomId;
 }
@@ -123,12 +129,16 @@ export function initSocket(server, { origin }) {
     const userId = socket.userId;
     addOnlineSocket(userId, socket.id);
 
-    const chats = await Chat.find({ members: userId }).select("_id");
-    chats.forEach((chat) => socket.join(String(chat._id)));
+    try {
+      const chats = await Chat.find({ members: userId }).select("_id");
+      chats.forEach((chat) => socket.join(String(chat._id)));
+    } catch (err) {
+      console.error("Socket bootstrap failed to join chat rooms:", err?.message || err);
+    }
 
     io.emit("presence", { online: Array.from(onlineUsers.keys()) });
 
-    socket.on("join-room", (payload = {}, ack) => {
+    const handleJoinRoom = (payload = {}, ack) => {
       const roomId = String(payload.roomId || "").trim();
       const userName = String(payload.userName || "").trim();
 
@@ -179,8 +189,20 @@ export function initSocket(server, { origin }) {
         userId: String(userId),
         userName
       });
+      socket.to(roomId).emit("call-peer-joined", {
+        roomId,
+        socketId: socket.id,
+        userId: String(userId),
+        userName
+      });
 
       socket.emit("room-joined", {
+        roomId,
+        socketId: socket.id,
+        isInitiator,
+        peers
+      });
+      socket.emit("call-room-joined", {
         roomId,
         socketId: socket.id,
         isInitiator,
@@ -196,9 +218,9 @@ export function initSocket(server, { origin }) {
           peers
         });
       }
-    });
+    };
 
-    socket.on("signal", (payload = {}) => {
+    const handleSignal = (payload = {}) => {
       const roomId = String(payload.roomId || socketCallRoomMap.get(socket.id) || "").trim();
       const to = String(payload.to || "").trim();
       const data = payload.data || {};
@@ -222,13 +244,15 @@ export function initSocket(server, { origin }) {
           return;
         }
         io.to(to).emit("signal", outgoing);
+        io.to(to).emit("call-signal", outgoing);
         return;
       }
 
       socket.to(roomId).emit("signal", outgoing);
-    });
+      socket.to(roomId).emit("call-signal", outgoing);
+    };
 
-    socket.on("leave-room", (payload = {}, ack) => {
+    const handleLeaveRoom = (payload = {}, ack) => {
       const roomId = String(payload.roomId || "").trim();
       const leftRoomId = leaveActiveCallRoom(socket, {
         reason: "leave-room",
@@ -240,7 +264,14 @@ export function initSocket(server, { origin }) {
           roomId: leftRoomId || roomId
         });
       }
-    });
+    };
+
+    socket.on("join-room", handleJoinRoom);
+    socket.on("call-join", handleJoinRoom);
+    socket.on("signal", handleSignal);
+    socket.on("call-signal", handleSignal);
+    socket.on("leave-room", handleLeaveRoom);
+    socket.on("call-leave", handleLeaveRoom);
 
     socket.on("call-invite", async (payload = {}) => {
       try {

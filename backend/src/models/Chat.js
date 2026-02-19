@@ -24,5 +24,8 @@ const ChatSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+ChatSchema.index({ members: 1, lastMessageAt: -1 });
+ChatSchema.index({ isLocked: 1, updatedAt: -1 });
+
 export default mongoose.model("Chat", ChatSchema);
 

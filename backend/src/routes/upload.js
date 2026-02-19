@@ -58,6 +58,7 @@ const BLOCKED_FILE_EXTENSIONS = new Set([
 const IMAGE_MAX_MB = Math.max(1, Number.parseInt(process.env.IMAGE_UPLOAD_MAX_MB || "10", 10) || 10);
 const FILE_MAX_MB = Math.max(1, Number.parseInt(process.env.FILE_UPLOAD_MAX_MB || "50", 10) || 50);
 const MAX_UPLOAD_BYTES = Math.max(IMAGE_MAX_MB, FILE_MAX_MB) * 1024 * 1024;
+const SAFE_FILE_KEY_PATTERN = /^[a-z0-9-]+\.[a-z0-9]{1,10}$/i;
 
 function getRequestedUploadType(req) {
   const requested = String(req.body?.uploadType || "").trim().toLowerCase();
@@ -152,7 +153,17 @@ router.post("/", authRequired, (req, res, next) => {
 });
 
 router.get("/:fileKey", authRequired, (req, res) => {
-  const filePath = path.join(uploadDir, req.params.fileKey);
+  const fileKey = String(req.params.fileKey || "").trim();
+  if (!SAFE_FILE_KEY_PATTERN.test(fileKey)) {
+    return res.status(400).json({ message: "Invalid file key" });
+  }
+  const filePath = path.resolve(uploadDir, fileKey);
+  if (!filePath.startsWith(path.resolve(uploadDir))) {
+    return res.status(400).json({ message: "Invalid file path" });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ message: "File not found" });
+  }
   return res.sendFile(filePath, (err) => {
     if (err) {
       return res.status(404).end();

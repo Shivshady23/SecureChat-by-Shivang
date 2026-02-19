@@ -50,6 +50,9 @@ MessageSchema.index(
   { senderId: 1, clientMsgId: 1 },
   { unique: true, partialFilterExpression: { clientMsgId: { $exists: true, $ne: "" } } }
 );
+MessageSchema.index({ chatId: 1, createdAt: 1 });
+MessageSchema.index({ chatId: 1, senderId: 1, createdAt: -1 });
+MessageSchema.index({ chatId: 1, readBy: 1 });
 
 export default mongoose.model("Message", MessageSchema);
 

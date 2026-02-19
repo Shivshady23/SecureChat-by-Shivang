@@ -6,6 +6,7 @@
 
 import express from "express";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import { authRequired } from "../middleware/auth.js";
@@ -15,6 +16,11 @@ const router = express.Router();
 const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 const MAX_REACTION_EMOJI_LENGTH = 16;
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_TEXT_MESSAGE_LENGTH = 8000;
+
+function isValidId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ""));
+}
 
 function computeIntegrityHash({
   ciphertextB64,
@@ -81,6 +87,9 @@ async function purgeDisappearedMessages(chat) {
 }
 
 router.get("/:chatId", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const chat = await Chat.findById(req.params.chatId);
   if (!chat || !chat.members.some((m) => String(m) === req.user.id)) {
     return res.status(404).json({ message: "Chat not found" });
@@ -121,6 +130,10 @@ router.get("/:chatId", authRequired, async (req, res) => {
 
 router.post("/:chatId", authRequired, async (req, res) => {
   try {
+    if (!isValidId(req.params.chatId)) {
+      return res.status(400).json({ message: "Invalid chat id" });
+    }
+
     const {
       type,
       content,
@@ -151,6 +164,9 @@ router.post("/:chatId", authRequired, async (req, res) => {
 
     if (!type || !["text", "image", "file"].includes(type)) {
       return res.status(400).json({ message: "Invalid type" });
+    }
+    if (type === "text" && String(content || "").length > MAX_TEXT_MESSAGE_LENGTH) {
+      return res.status(400).json({ message: "Message is too long" });
     }
     if (type !== "text" && !String(fileKey || "").trim()) {
       return res.status(400).json({ message: "fileKey is required for file/image messages" });
@@ -280,6 +296,9 @@ router.post("/:chatId", authRequired, async (req, res) => {
 });
 
 router.post("/:chatId/read", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const { messageIds } = req.body;
   if (!Array.isArray(messageIds) || messageIds.length === 0) {
     return res.json({ updated: 0 });
@@ -307,6 +326,9 @@ router.post("/:chatId/read", authRequired, async (req, res) => {
 });
 
 router.patch("/:messageId", authRequired, async (req, res) => {
+  if (!isValidId(req.params.messageId)) {
+    return res.status(400).json({ message: "Invalid message id" });
+  }
   const message = await Message.findById(req.params.messageId);
   if (!message) {
     return res.status(404).json({ message: "Message not found" });
@@ -440,6 +462,9 @@ router.patch("/:messageId", authRequired, async (req, res) => {
 });
 
 router.patch("/:messageId/reaction", authRequired, async (req, res) => {
+  if (!isValidId(req.params.messageId)) {
+    return res.status(400).json({ message: "Invalid message id" });
+  }
   const emoji = String(req.body?.emoji || "").trim();
   if (!emoji || emoji.length > MAX_REACTION_EMOJI_LENGTH) {
     return res.status(400).json({ message: "Invalid emoji reaction" });
@@ -499,6 +524,9 @@ router.patch("/:messageId/reaction", authRequired, async (req, res) => {
 });
 
 router.delete("/:messageId", authRequired, async (req, res) => {
+  if (!isValidId(req.params.messageId)) {
+    return res.status(400).json({ message: "Invalid message id" });
+  }
   const scope = String(req.query.scope || "me").toLowerCase();
   if (!["me", "everyone"].includes(scope)) {
     return res.status(400).json({ message: "Invalid scope" });

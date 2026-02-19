@@ -4,13 +4,13 @@
 // - Helper functions/state handling
 // - Main module logic and exports
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { getAvatarSrc } from "../utils/avatar.js";
 import ReactionBar from "./ReactionBar";
 import { API_BASE } from "../services/api.js";
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
 
-export default function MessageList({
+function MessageList({
   messages,
   usersById,
   currentUserId,
@@ -230,6 +230,15 @@ export default function MessageList({
     if (directUrl.startsWith("http://") || directUrl.startsWith("https://")) return directUrl;
     if (directUrl.startsWith("/uploads/")) return `${API_BASE}${directUrl}`;
     if (message.fileKey) return `${API_BASE}/uploads/${message.fileKey}`;
+    return "";
+  }
+
+  function getMediaSource(message) {
+    if (message?.encrypted) return "";
+    const directUrl = String(message?.fileUrl || message?.content || "").trim();
+    if (directUrl.startsWith("http://") || directUrl.startsWith("https://")) return directUrl;
+    if (directUrl.startsWith("/uploads/")) return `${API_BASE}${directUrl}`;
+    if (message?.fileKey) return `${API_BASE}/uploads/${message.fileKey}`;
     return "";
   }
 
@@ -576,6 +585,11 @@ export default function MessageList({
                             {getFileIcon(msg)} {msg.fileName || "File"}
                           </span>
                           <span className="file-size">{formatFileSize(msg.fileSize || msg.size)}</span>
+                          {String(msg.mimeType || "").toLowerCase().startsWith("audio/") && getMediaSource(msg) ? (
+                            <audio className="message-audio-player" controls preload="none">
+                              <source src={getMediaSource(msg)} type={msg.mimeType || "audio/webm"} />
+                            </audio>
+                          ) : null}
                           <button
                             type="button"
                             className="file-button"
@@ -713,4 +727,6 @@ export default function MessageList({
     </div>
   );
 }
+
+export default memo(MessageList);
 

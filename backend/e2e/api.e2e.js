@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 
-const BASE_URL = (process.env.E2E_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
+const BASE_URL = (process.env.E2E_BASE_URL || "http://localhost:5001").replace(/\/$/, "");
 
 function makeUser(prefix) {
   const seed = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -57,6 +57,7 @@ async function run() {
   let aliceToken;
   let bobToken;
   let chatId;
+  let groupChatId;
   let messageId;
 
   try {
@@ -117,7 +118,19 @@ async function run() {
     expectStatus(aliceChats.status, 200, "List chats", aliceChats.data);
     assert.ok(aliceChats.data?.chats?.some((c) => c._id === chatId), "Accepted chat missing from Alice chat list");
 
-    const sendMessage = await api(`/api/messages/${chatId}`, {
+    const createGroup = await api("/api/chats/group", {
+      method: "POST",
+      token: aliceToken,
+      body: {
+        name: "e2e-group",
+        memberIds: [bobFromList._id]
+      }
+    });
+    expectStatus(createGroup.status, 200, "Create group", createGroup.data);
+    groupChatId = createGroup.data?.chat?._id;
+    assert.ok(groupChatId, "Group chat id missing");
+
+    const sendMessage = await api(`/api/messages/${groupChatId}`, {
       method: "POST",
       token: aliceToken,
       body: { type: "text", content: "hello from e2e" }
@@ -126,11 +139,11 @@ async function run() {
     messageId = sendMessage.data?.message?._id;
     assert.ok(messageId, "Message id missing after sending message");
 
-    const listMessages = await api(`/api/messages/${chatId}`, { token: bobToken });
+    const listMessages = await api(`/api/messages/${groupChatId}`, { token: bobToken });
     expectStatus(listMessages.status, 200, "List messages", listMessages.data);
     assert.ok(listMessages.data?.messages?.some((m) => m._id === messageId), "Bob cannot see Alice message in chat");
 
-    const read = await api(`/api/messages/${chatId}/read`, {
+    const read = await api(`/api/messages/${groupChatId}/read`, {
       method: "POST",
       token: bobToken,
       body: { messageIds: [messageId] }

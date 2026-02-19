@@ -4,10 +4,10 @@
 // - Helper functions/state handling
 // - Main module logic and exports
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { getAvatarSrc } from "../utils/avatar.js";
 
-export default function ChatList({
+function ChatList({
   chats,
   selectedChatId,
   onSelectChat,
@@ -241,5 +241,7 @@ export default function ChatList({
     </div>
   );
 }
+
+export default memo(ChatList);
 
 

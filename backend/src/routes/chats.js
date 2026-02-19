@@ -15,6 +15,7 @@ import { getIO } from "../socket/index.js";
 
 const router = express.Router();
 const CHAT_MEMBER_SELECT = "_id name username publicKeyJwk e2eePublicKeySpkiB64 e2eeKeyVersion about avatarUrl";
+const MIN_LOCK_DIGEST_LENGTH = 32;
 
 function normalizeGroupName(name) {
   return String(name || "").trim().slice(0, 80);
@@ -37,6 +38,10 @@ function validateAvatarUrl(rawAvatarUrl) {
 
 function chatHasMember(chat, userId) {
   return (chat?.members || []).some((memberId) => String(memberId) === String(userId));
+}
+
+function isValidId(value) {
+  return mongoose.Types.ObjectId.isValid(String(value || ""));
 }
 
 async function populateChatById(chatId) {
@@ -174,6 +179,9 @@ router.post("/group", authRequired, async (req, res) => {
 });
 
 router.patch("/:chatId/group-profile", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const { name, motive, avatarUrl } = req.body || {};
 
   const chat = await Chat.findById(req.params.chatId);
@@ -238,6 +246,9 @@ router.patch("/:chatId/group-profile", authRequired, async (req, res) => {
 
 router.delete("/:chatId/members/:memberId", authRequired, async (req, res) => {
   const { chatId, memberId } = req.params;
+  if (!isValidId(chatId) || !isValidId(memberId)) {
+    return res.status(400).json({ message: "Invalid chat or member id" });
+  }
 
   const chat = await Chat.findById(chatId);
   if (!chat || !chatHasMember(chat, req.user.id)) {
@@ -292,6 +303,9 @@ router.delete("/:chatId/members/:memberId", authRequired, async (req, res) => {
 });
 
 router.patch("/:chatId/vanish", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const { enabled } = req.body || {};
   if (typeof enabled !== "boolean") {
     return res.status(400).json({ message: "enabled must be boolean" });
@@ -320,6 +334,9 @@ router.patch("/:chatId/vanish", authRequired, async (req, res) => {
 });
 
 router.patch("/:chatId/pin", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const { messageId } = req.body || {};
   const chat = await Chat.findOne({ _id: req.params.chatId, members: req.user.id });
   if (!chat) {
@@ -369,6 +386,9 @@ router.patch("/:chatId/pin", authRequired, async (req, res) => {
 });
 
 router.post("/:chatId/lock", authRequired, async (req, res) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const chat = await findMemberChat(req.params.chatId, req.user.id);
   if (!chat) {
     return res.status(404).json({ message: "Chat not found" });
@@ -376,6 +396,9 @@ router.post("/:chatId/lock", authRequired, async (req, res) => {
   const passwordDigest = String(req.body?.passwordDigest || "").trim();
   if (!passwordDigest) {
     return res.status(400).json({ message: "passwordDigest is required" });
+  }
+  if (passwordDigest.length < MIN_LOCK_DIGEST_LENGTH) {
+    return res.status(400).json({ message: "Invalid password digest" });
   }
 
   const hash = await bcrypt.hash(passwordDigest, 12);
@@ -398,6 +421,9 @@ router.post("/:chatId/lock", authRequired, async (req, res) => {
 });
 
 router.post("/:chatId/unlock", authRequired, async (req, res, next) => {
+  if (!isValidId(req.params.chatId)) {
+    return res.status(400).json({ message: "Invalid chat id" });
+  }
   const chat = await findMemberChat(req.params.chatId, req.user.id, true);
   if (!chat) {
     return res.status(404).json({ message: "Chat not found" });

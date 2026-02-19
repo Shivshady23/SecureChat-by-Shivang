@@ -64,7 +64,7 @@ export default function Login() {
           </button>
         </div>
         <div className="auth-header">
-          <div className="auth-icon">💬</div>
+          <div className="auth-icon">{"\uD83D\uDCAC"}</div>
           <h1>SecureChat</h1>
           <p className="auth-subtitle">End-to-end encrypted messaging</p>
         </div>
@@ -75,12 +75,12 @@ export default function Login() {
           <div className="form-group">
             <label htmlFor="username">Username</label>
             <div className="input-wrapper">
-              <span className="input-icon">👤</span>
-              <input 
+              <span className="input-icon">{"\uD83D\uDC64"}</span>
+              <input
                 id="username"
                 type="text"
-                value={username} 
-                onChange={(e) => setUsername(e.target.value)} 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter your username"
                 disabled={loading}
               />
@@ -90,12 +90,12 @@ export default function Login() {
           <div className="form-group">
             <label htmlFor="password">Password</label>
             <div className="input-wrapper">
-              <span className="input-icon">🔒</span>
-              <input 
+              <span className="input-icon">{"\uD83D\uDD12"}</span>
+              <input
                 id="password"
                 type={showPassword ? "text" : "password"}
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 disabled={loading}
               />
@@ -133,27 +133,24 @@ export default function Login() {
             </div>
           </div>
 
-          <button 
-            type="submit" 
-            className="auth-button" 
-            disabled={loading}
-          >
+          <button type="submit" className="auth-button" disabled={loading}>
             {loading ? (
               <span className="loading">Signing in...</span>
             ) : (
               <>
                 <span>Login</span>
-                <span className="button-arrow">→</span>
+                <span className="button-arrow">{"\u2192"}</span>
               </>
             )}
           </button>
         </form>
 
         <div className="auth-footer">
-          <p>Don't have an account? <Link to="/register">Create one</Link></p>
+          <p>
+            Don't have an account? <Link to="/register">Create one</Link>
+          </p>
         </div>
       </div>
     </div>
   );
 }
-

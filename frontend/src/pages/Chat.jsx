@@ -113,7 +113,6 @@ export default function Chat() {
     }
   });
   const [lockedAccessDigest, setLockedAccessDigest] = useState("");
-  const [lockedAccessExpiresAt, setLockedAccessExpiresAt] = useState(0);
   const [chatLockPrompt, setChatLockPrompt] = useState(null);
   const [chatLockPassword, setChatLockPassword] = useState("");
   const [chatLockPromptError, setChatLockPromptError] = useState("");
@@ -683,18 +682,6 @@ export default function Chat() {
   }, [selectedChatId, isMobileViewport]);
 
   useEffect(() => {
-    if (chatFilter !== "locked" || !lockedAccessExpiresAt) return;
-    const delay = Math.max(0, lockedAccessExpiresAt - Date.now());
-    const timer = setTimeout(() => {
-      setChatFilter("unlocked");
-      setLockedAccessDigest("");
-      setLockedAccessExpiresAt(0);
-      clearSelectedChatView();
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [chatFilter, lockedAccessExpiresAt]);
-
-  useEffect(() => {
     if (showInfo && selectedChatIdRef.current) {
       const active = chatsRef.current.find((chat) => String(chat._id) === String(selectedChatIdRef.current));
       if (active?.type === "group") {
@@ -1054,7 +1041,6 @@ export default function Chat() {
   async function openUnlockedChatsView() {
     setChatFilter("unlocked");
     setLockedAccessDigest("");
-    setLockedAccessExpiresAt(0);
     clearSelectedChatView();
     await refreshChats("unlocked", "");
   }
@@ -1133,7 +1119,6 @@ export default function Chat() {
         await refreshChats("locked", passwordDigest);
         setChatFilter("locked");
         setLockedAccessDigest(passwordDigest);
-        setLockedAccessExpiresAt(Date.now() + 60 * 1000);
         clearSelectedChatView();
         setChatLockPrompt(null);
         setChatLockPassword("");
@@ -1167,7 +1152,6 @@ export default function Chat() {
       if (shouldOpenAfterUnlock) {
         setChatFilter("unlocked");
         setLockedAccessDigest("");
-        setLockedAccessExpiresAt(0);
         await refreshChats("unlocked", "");
         openUnlockedChatById(normalizedChatId);
       } else {

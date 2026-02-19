@@ -10,6 +10,10 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 const router = express.Router();
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
+const NAME_MAX_LENGTH = 80;
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MAX_LENGTH = 128;
 
 function escapeRegex(value) {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -36,6 +40,19 @@ router.post("/register", async (req, res) => {
     const cleanUsername = typeof username === "string" ? username.trim() : "";
     if (!cleanName || !cleanUsername || !password) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+    if (cleanName.length > NAME_MAX_LENGTH) {
+      return res.status(400).json({ message: `Name must be ${NAME_MAX_LENGTH} characters or fewer` });
+    }
+    if (!USERNAME_REGEX.test(cleanUsername)) {
+      return res.status(400).json({
+        message: "Username must be 3-32 characters and can contain letters, numbers, and underscore only"
+      });
+    }
+    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+      return res.status(400).json({
+        message: `Password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters long`
+      });
     }
 
     const existing = await User.findOne({ username: cleanUsername });
@@ -91,6 +108,9 @@ router.post("/login", async (req, res) => {
     const cleanUsername = typeof username === "string" ? username.trim() : "";
     if (!cleanUsername || !password) {
       return res.status(400).json({ message: "Missing username or password" });
+    }
+    if (!USERNAME_REGEX.test(cleanUsername)) {
+      return res.status(400).json({ message: "Invalid username format" });
     }
 
     const user = await findUserByUsername(cleanUsername);

@@ -5,8 +5,10 @@
 // - Main module logic and exports
 
 import express from "express";
+import mongoose from "mongoose";
 import ChatRequest from "../models/ChatRequest.js";
 import Chat from "../models/Chat.js";
+import User from "../models/User.js";
 import { authRequired } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -30,6 +32,14 @@ router.post("/", authRequired, async (req, res) => {
 
     if (String(toUserId) === String(req.user.id)) {
       return res.status(400).json({ message: "Cannot request yourself" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(toUserId)) {
+      return res.status(400).json({ message: "Invalid recipient id" });
+    }
+
+    const targetUserExists = await User.exists({ _id: toUserId });
+    if (!targetUserExists) {
+      return res.status(404).json({ message: "Recipient user not found" });
     }
 
     const existingChat = await Chat.findOne({
@@ -94,6 +104,10 @@ router.post("/:id/respond", authRequired, async (req, res) => {
     const { status } = req.body || {};
     if (!status || !["accepted", "rejected"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid request id" });
     }
 
     const request = await ChatRequest.findById(req.params.id);
