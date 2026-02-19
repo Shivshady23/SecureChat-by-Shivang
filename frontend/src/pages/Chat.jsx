@@ -1480,12 +1480,11 @@ export default function Chat() {
       deliveredTo: [user.id],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      replyTo: replyTo || null,
-      pendingUndo: true
+      replyTo: replyTo || null
     };
   }
 
-  function queueMessageSendWithUndo({ chat, pendingMessage, label, commit }) {
+  function queueMessageSend({ chat, pendingMessage, commit }) {
     const tempId = String(pendingMessage._id);
     setMessages((prev) => appendUniqueMessage(prev, pendingMessage));
     if (pendingMessage.type === "text") {
@@ -1499,45 +1498,34 @@ export default function Chat() {
       )
     );
 
-    queueUndoAction({
-      label,
-      onCommit: async () => {
-        try {
-          const res = await commit();
-          if (res?.message) {
-            setMessages((prev) => replaceMessageById(prev, tempId, res.message));
-            if (!res.message.encrypted && res.message.type === "text") {
-              setRendered((prev) => ({ ...prev, [res.message._id]: res.message.content || "" }));
-            }
-            setChats((prev) =>
-              prev.map((entry) =>
-                String(entry._id) === String(res.message.chatId)
-                  ? { ...entry, lastMessageAt: res.message.createdAt }
-                  : entry
-              )
-            );
-          } else {
-            setMessages((prev) => prev.filter((entry) => String(entry._id) !== tempId));
+    (async () => {
+      try {
+        const res = await commit();
+        if (res?.message) {
+          setMessages((prev) => replaceMessageById(prev, tempId, res.message));
+          if (!res.message.encrypted && res.message.type === "text") {
+            setRendered((prev) => ({ ...prev, [res.message._id]: res.message.content || "" }));
           }
-        } catch (err) {
+          setChats((prev) =>
+            prev.map((entry) =>
+              String(entry._id) === String(res.message.chatId)
+                ? { ...entry, lastMessageAt: res.message.createdAt }
+                : entry
+            )
+          );
+        } else {
           setMessages((prev) => prev.filter((entry) => String(entry._id) !== tempId));
-          setRendered((prev) => {
-            const next = { ...prev };
-            delete next[tempId];
-            return next;
-          });
-          throw err;
         }
-      },
-      onUndo: () => {
+      } catch (err) {
         setMessages((prev) => prev.filter((entry) => String(entry._id) !== tempId));
         setRendered((prev) => {
           const next = { ...prev };
           delete next[tempId];
           return next;
         });
+        setError(err?.message || "Failed to send message");
       }
-    });
+    })();
   }
 
   async function togglePinSelectedMessage(singleSelectedMessage) {
@@ -1700,10 +1688,9 @@ export default function Chat() {
         content: text,
         replyTo: replyToMessageId
       });
-      queueMessageSendWithUndo({
+      queueMessageSend({
         chat,
         pendingMessage,
-        label: "Sending message",
         commit: () => api(`/api/messages/${chat._id}`, { method: "POST", body: JSON.stringify(payload) })
       });
       setReplyToMessageId(null);
@@ -1787,10 +1774,9 @@ export default function Chat() {
         });
       };
 
-      queueMessageSendWithUndo({
+      queueMessageSend({
         chat,
         pendingMessage,
-        label: "Sending file",
         commit
       });
       setReplyToMessageId(null);
