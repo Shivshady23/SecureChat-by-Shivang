@@ -1420,12 +1420,33 @@ export default function Chat() {
     deleteMessageForMe([messageId]);
   }
 
-  function getDirectChatPeer(chat) {
+  async function refreshUsersFromServer() {
+    const res = await api("/api/users");
+    const nextUsers = Array.isArray(res?.users) ? res.users : [];
+    setUsers(nextUsers);
+    return nextUsers;
+  }
+
+  async function getDirectChatPeer(chat) {
     const otherRef = chat.members.find((m) => String(m._id || m) !== String(user.id));
-    const other = typeof otherRef === "string" ? users.find((u) => String(u._id) === String(otherRef)) : otherRef;
+    let other = typeof otherRef === "string" ? users.find((u) => String(u._id) === String(otherRef)) : otherRef;
     const receiverId = String(other?._id || other || "");
-    const receiverPublicKeySpkiB64 = other?.e2eePublicKeySpkiB64 || "";
+    let receiverPublicKeySpkiB64 = other?.e2eePublicKeySpkiB64 || "";
     const senderPublicKeySpkiB64 = user?.e2eePublicKeySpkiB64 || "";
+
+    if (receiverId) {
+      try {
+        const latestUsers = await refreshUsersFromServer();
+        const latestOther = latestUsers.find((entry) => String(entry?._id || entry?.id) === receiverId);
+        if (latestOther?.e2eePublicKeySpkiB64) {
+          other = latestOther;
+          receiverPublicKeySpkiB64 = latestOther.e2eePublicKeySpkiB64;
+        }
+      } catch {
+        // Fall back to cached user list when live refresh is unavailable.
+      }
+    }
+
     if (!receiverId || !receiverPublicKeySpkiB64) {
       throw new Error("Recipient encryption key not available yet. Ask them to login once.");
     }
@@ -1578,7 +1599,7 @@ export default function Chat() {
     try {
       let payload = { content: nextText.trim(), encrypted: false };
       if (chat.type === "direct") {
-        const direct = getDirectChatPeer(chat);
+        const direct = await getDirectChatPeer(chat);
         const encryptedPayload = await encryptForReceiver({
           senderId: user.id,
           receiverId: direct.receiverId,
@@ -1644,7 +1665,7 @@ export default function Chat() {
     try {
       let payload = { type: "text", content: text, encrypted: false };
       if (chat.type === "direct") {
-        const direct = getDirectChatPeer(chat);
+        const direct = await getDirectChatPeer(chat);
         const encryptedPayload = await encryptForReceiver({
           senderId: user.id,
           receiverId: direct.receiverId,
@@ -1713,7 +1734,7 @@ export default function Chat() {
 
       const commit = async () => {
         if (chat.type === "direct") {
-          const direct = getDirectChatPeer(chat);
+          const direct = await getDirectChatPeer(chat);
           const buffer = await file.arrayBuffer();
           const encryptedPayload = await encryptForReceiver({
             senderId: user.id,
