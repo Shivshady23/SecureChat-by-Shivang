@@ -1222,6 +1222,8 @@ body {
 
 .message-bubble {
   max-width: 66%;
+  width: fit-content;
+  min-width: 0;
   border-radius: 12px;
   padding: 8px 12px;
   word-break: break-word;
@@ -1338,6 +1340,7 @@ body {
   margin-bottom: 6px;
   font-size: 0.8rem;
   opacity: 0.9;
+  max-width: min(34ch, 100%);
 }
 
 .reply-label {

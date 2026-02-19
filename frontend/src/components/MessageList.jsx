@@ -398,6 +398,8 @@ export default function MessageList({
             const isClusterEnd = !closeToNext;
             const isEditingThisMessage = editingMessageId && String(editingMessageId) === msgId;
             const resolvedText = rendered[msg._id] || (!msg.encrypted ? msg.content : "...");
+            const normalizedText = String(resolvedText || "").trim();
+            const hideReplyPlaceholderText = Boolean(msg.replyTo) && normalizedText === ".";
             const reactionsMap = new Map();
             for (const entry of msg.reactions || []) {
               if (!entry) continue;
@@ -495,22 +497,24 @@ export default function MessageList({
                       </div>
                     )}
 
-                    {msg.type === "text" ? (
+                    {msg.type === "text" && !hideReplyPlaceholderText ? (
                       <div className={`message-text ${isBigEmojiText(resolvedText) ? "message-text-big-emoji" : ""}`}>{resolvedText}</div>
                     ) : (
-                      <div className="message-file">
-                        <span className="file-label">{"\uD83D\uDCCE"} {msg.fileName || "File"}</span>
-                        <button
-                          type="button"
-                          className="file-button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDownloadFile(msg);
-                          }}
-                        >
-                          Download
-                        </button>
-                      </div>
+                      msg.type !== "text" && (
+                        <div className="message-file">
+                          <span className="file-label">{"\uD83D\uDCCE"} {msg.fileName || "File"}</span>
+                          <button
+                            type="button"
+                            className="file-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDownloadFile(msg);
+                            }}
+                          >
+                            Download
+                          </button>
+                        </div>
+                      )
                     )}
 
                     {reactions.length > 0 && (
