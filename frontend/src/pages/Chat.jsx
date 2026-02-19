@@ -100,7 +100,6 @@ export default function Chat() {
     return clampSidebarWidth(initial);
   });
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
-  const [undoQueue, setUndoQueue] = useState([]);
   const [chatFilter, setChatFilter] = useState("unlocked");
   const [archivedChatIds, setArchivedChatIds] = useState(() => {
     try {
@@ -131,7 +130,6 @@ export default function Chat() {
   const sidebarResizeStartXRef = useRef(0);
   const sidebarResizeStartWidthRef = useRef(360);
   const groupAvatarInputRef = useRef(null);
-  const undoActionTimersRef = useRef(new Map());
 
   // Data normalization helpers.
   function normalizeUnreadCount(rawValue) {
@@ -320,69 +318,6 @@ export default function Chat() {
       byId.set(String(msg._id), msg);
     }
     return sortMessagesByDate(Array.from(byId.values()));
-  }
-
-  function finalizeUndoAction(actionId) {
-    const existing = undoActionTimersRef.current.get(actionId);
-    if (!existing) return null;
-    if (existing.timeoutId) clearTimeout(existing.timeoutId);
-    if (existing.intervalId) clearInterval(existing.intervalId);
-    undoActionTimersRef.current.delete(actionId);
-    setUndoQueue((prev) => prev.filter((entry) => entry.id !== actionId));
-    return existing;
-  }
-
-  function queueUndoAction({ label, onCommit, onUndo, durationMs = 5000 }) {
-    const actionId = `undo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const expiresAt = Date.now() + durationMs;
-
-    setUndoQueue((prev) => [
-      ...prev,
-      {
-        id: actionId,
-        label,
-        expiresAt,
-        remainingMs: durationMs
-      }
-    ]);
-
-    const intervalId = setInterval(() => {
-      setUndoQueue((prev) =>
-        prev.map((entry) =>
-          entry.id === actionId
-            ? { ...entry, remainingMs: Math.max(0, entry.expiresAt - Date.now()) }
-            : entry
-        )
-      );
-    }, 200);
-
-    const timeoutId = setTimeout(async () => {
-      finalizeUndoAction(actionId);
-      try {
-        await onCommit?.();
-      } catch (err) {
-        setError(err?.message || "Action failed");
-      }
-    }, durationMs);
-
-    undoActionTimersRef.current.set(actionId, {
-      actionId,
-      onUndo,
-      timeoutId,
-      intervalId
-    });
-
-    return actionId;
-  }
-
-  function undoQueuedAction(actionId) {
-    const action = finalizeUndoAction(actionId);
-    if (!action) return;
-    try {
-      action.onUndo?.();
-    } catch (err) {
-      setError(err?.message || "Failed to undo action");
-    }
   }
 
   function toStoredUser(rawUser) {
@@ -611,16 +546,6 @@ export default function Chat() {
   useEffect(() => {
     notificationSettingsRef.current = notificationSettings;
   }, [notificationSettings]);
-
-  useEffect(() => {
-    return () => {
-      for (const entry of undoActionTimersRef.current.values()) {
-        if (entry.timeoutId) clearTimeout(entry.timeoutId);
-        if (entry.intervalId) clearInterval(entry.intervalId);
-      }
-      undoActionTimersRef.current.clear();
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1371,16 +1296,12 @@ export default function Chat() {
         setSelectedMessageIds((prev) => prev.filter((id) => !idSet.has(String(id))));
         setReplyToMessageId((prev) => (prev && idSet.has(String(prev)) ? null : prev));
         setEditingMessageId((prev) => (prev && idSet.has(String(prev)) ? "" : prev));
-
-        queueUndoAction({
-          label: `Deleted ${ids.length} message${ids.length > 1 ? "s" : ""}`,
-          onCommit: async () => {
-            await Promise.all(ids.map((id) => api(`/api/messages/${id}?scope=me`, { method: "DELETE" })));
-          },
-          onUndo: () => {
-            setMessages((prev) => mergeMessages(prev, snapshot));
-          }
-        });
+        try {
+          await Promise.all(ids.map((id) => api(`/api/messages/${id}?scope=me`, { method: "DELETE" })));
+        } catch (err) {
+          setMessages((prev) => mergeMessages(prev, snapshot));
+          setError(err?.message || "Failed to delete message");
+        }
       }
     });
   }
@@ -1400,16 +1321,12 @@ export default function Chat() {
         setSelectedMessageIds((prev) => prev.filter((id) => !idSet.has(String(id))));
         setReplyToMessageId((prev) => (prev && idSet.has(String(prev)) ? null : prev));
         setEditingMessageId((prev) => (prev && idSet.has(String(prev)) ? "" : prev));
-
-        queueUndoAction({
-          label: `Deleted ${ids.length} message${ids.length > 1 ? "s" : ""} for everyone`,
-          onCommit: async () => {
-            await Promise.all(ids.map((id) => api(`/api/messages/${id}?scope=everyone`, { method: "DELETE" })));
-          },
-          onUndo: () => {
-            setMessages((prev) => mergeMessages(prev, snapshot));
-          }
-        });
+        try {
+          await Promise.all(ids.map((id) => api(`/api/messages/${id}?scope=everyone`, { method: "DELETE" })));
+        } catch (err) {
+          setMessages((prev) => mergeMessages(prev, snapshot));
+          setError(err?.message || "Failed to delete message");
+        }
       }
     });
   }
@@ -2131,21 +2048,6 @@ export default function Chat() {
               editingMessageId={editingMessageId}
               customEmojis={customEmojis}
             />
-
-            {undoQueue.length > 0 && (
-              <div className="undo-stack" role="status" aria-live="polite">
-                {undoQueue.map((entry) => (
-                  <div key={entry.id} className="undo-item">
-                    <span className="undo-label">
-                      {entry.label} ({Math.max(1, Math.ceil((entry.remainingMs || 0) / 1000))}s)
-                    </span>
-                    <button type="button" className="undo-btn" onClick={() => undoQueuedAction(entry.id)}>
-                      Undo
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <MessageInput
               onSendText={sendText}
