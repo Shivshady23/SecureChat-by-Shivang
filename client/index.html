@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC 1:1 Audio/Video Call</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./config.js"></script>
+    <script>
+      (function loadSocketIoClient() {
+        var config = window.APP_CONFIG || {};
+        var signalingUrl = String(config.SIGNALING_URL || "http://localhost:4000").replace(/\/+$/, "");
+        var script = document.createElement("script");
+        script.src = signalingUrl + "/socket.io/socket.io.js";
+        script.async = true;
+        script.onload = function () {
+          window.dispatchEvent(new Event("socketio-loaded"));
+        };
+        script.onerror = function () {
+          window.dispatchEvent(new Event("socketio-error"));
+        };
+        document.head.appendChild(script);
+      })();
+    </script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <h1>WebRTC 1:1 Call Demo</h1>
+
+      <section class="controls">
+        <label for="roomId">Room ID</label>
+        <input id="roomId" type="text" placeholder="room-123" />
+
+        <div class="button-row">
+          <button id="joinBtn">Join</button>
+          <button id="leaveBtn" disabled>Leave</button>
+          <button id="micBtn" disabled>Toggle Mic</button>
+          <button id="cameraBtn" disabled>Toggle Camera</button>
+        </div>
+      </section>
+
+      <section class="video-grid">
+        <div class="video-card">
+          <h2>Local</h2>
+          <video id="local" autoplay playsinline muted></video>
+        </div>
+        <div class="video-card">
+          <h2>Remote</h2>
+          <video id="remote" autoplay playsinline></video>
+        </div>
+      </section>
+
+      <section class="logs">
+        <h2>Status</h2>
+        <textarea id="status" rows="14" readonly></textarea>
+      </section>
+    </main>
+  </body>
+</html>
