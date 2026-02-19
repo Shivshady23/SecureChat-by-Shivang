@@ -203,6 +203,14 @@ body {
   height: 46px;
 }
 
+.rail-logout-btn {
+  margin-top: auto;
+}
+
+.sidebar-shell .rail-profile-btn {
+  margin-top: 6px;
+}
+
 .rail-profile-avatar {
   width: 38px;
   height: 38px;
