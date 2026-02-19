@@ -1255,23 +1255,24 @@ body {
 .message-bubble.with-tail::after {
   content: "";
   position: absolute;
-  bottom: 2px;
+  bottom: 7px;
   width: 10px;
   height: 10px;
-  transform: rotate(45deg);
+  transform: var(--tail-transform, none);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
   animation: tail-pop 0.16s ease both;
 }
 
 .message-row.other .message-bubble.with-tail::after {
-  left: -4px;
+  left: -6px;
+  --tail-transform: scaleX(-1);
   background: var(--whatsapp-message-other);
-  border-bottom-left-radius: 2px;
 }
 
 .message-row.own .message-bubble.with-tail::after {
-  right: -4px;
+  right: -6px;
+  --tail-transform: none;
   background: var(--whatsapp-message-own);
-  border-top-right-radius: 2px;
 }
 
 .message-sender-name {
@@ -2718,11 +2719,11 @@ body {
 @keyframes tail-pop {
   from {
     opacity: 0;
-    transform: rotate(45deg) scale(0.6);
+    transform: var(--tail-transform, none) scale(0.6);
   }
   to {
     opacity: 1;
-    transform: rotate(45deg) scale(1);
+    transform: var(--tail-transform, none) scale(1);
   }
 }
 
