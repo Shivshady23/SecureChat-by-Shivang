@@ -220,12 +220,6 @@ export default function Chat() {
     }
   }
 
-  function hideSidebarPanel() {
-    if (isMobileViewport) {
-      setIsSidebarOpen(false);
-    }
-  }
-
   function mergeChatUpdate(updatedChat) {
     if (!updatedChat?._id) return;
     const chatId = String(updatedChat._id);
@@ -2033,8 +2027,6 @@ export default function Chat() {
         onRequestDesktopPermission={requestDesktopPermission}
         error={error}
         sidebarStyle={!isMobileViewport ? { width: `${Math.round(sidebarWidth)}px` } : undefined}
-        isMobileViewport={isMobileViewport}
-        onMobileCloseSidebar={hideSidebarPanel}
       />
 
       {!isMobileViewport && (

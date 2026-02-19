@@ -34,9 +34,7 @@ export default function Sidebar({
   onUpdateNotificationSetting,
   onRequestDesktopPermission,
   error,
-  sidebarStyle,
-  isMobileViewport = false,
-  onMobileCloseSidebar
+  sidebarStyle
 }) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("chats");
@@ -184,8 +182,6 @@ export default function Sidebar({
               users={users}
               currentUserId={user?.id}
               onQuickCreateGroup={() => setShowCreateGroup(true)}
-              showMobileSidebarClose={Boolean(isMobileViewport)}
-              onMobileCloseSidebar={onMobileCloseSidebar}
               activeFilter={activeChatFilter}
               onOpenLockedChats={onOpenLockedChats}
               onOpenUnlockedChats={onOpenUnlockedChats}

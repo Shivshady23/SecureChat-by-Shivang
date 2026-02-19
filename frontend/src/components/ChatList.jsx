@@ -14,8 +14,6 @@ export default function ChatList({
   online,
   currentUserId,
   onQuickCreateGroup,
-  showMobileSidebarClose = false,
-  onMobileCloseSidebar,
   activeFilter = "unlocked",
   onOpenLockedChats,
   onOpenUnlockedChats,
@@ -118,17 +116,6 @@ export default function ChatList({
               >
                 <span className="chat-create-icon" aria-hidden="true">+</span>
                 <span className="chat-create-label">Create Group</span>
-              </button>
-            )}
-            {showMobileSidebarClose && (
-              <button
-                type="button"
-                className="chat-header-icon-btn chat-header-mobile-sidebar-btn"
-                onClick={() => onMobileCloseSidebar?.()}
-                title={selectedChatId ? "Back to chat" : "Select a chat first"}
-                disabled={!selectedChatId}
-              >
-                {"\u2192"}
               </button>
             )}
             <div className="chat-list-menu-wrap" ref={menuRef}>
