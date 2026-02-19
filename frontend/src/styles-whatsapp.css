@@ -4950,14 +4950,14 @@ body,
 }
 
 :root:not(.theme-dark) .message-row.own .message-bubble {
-  background: linear-gradient(145deg, var(--clay-lite-accent), var(--clay-lite-accent-2)) !important;
+  background: var(--whatsapp-message-own) !important;
   color: #ffffff;
   border-color: rgba(113, 126, 201, 0.45);
   box-shadow: 6px 6px 14px rgba(129, 144, 210, 0.42), -4px -4px 10px rgba(255, 255, 255, 0.28);
 }
 
 :root:not(.theme-dark) .message-row.own .message-bubble.with-tail::after {
-  background: linear-gradient(145deg, var(--clay-lite-accent), var(--clay-lite-accent-2)) !important;
+  background: var(--whatsapp-message-own) !important;
 }
 
 :root:not(.theme-dark) .message-time,
