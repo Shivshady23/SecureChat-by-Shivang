@@ -154,19 +154,21 @@ export default function Sidebar({
           <span className="rail-icon">{theme === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19"}</span>
         </button>
 
-        <button type="button" className="rail-btn rail-logout-btn" onClick={onLogout} title="Logout">
-          <span className="rail-icon">{"\u21AA"}</span>
-        </button>
+        <div className="rail-footer">
+          <button type="button" className="rail-btn rail-logout-btn" onClick={onLogout} title="Logout">
+            <span className="rail-icon">{"\u21AA"}</span>
+          </button>
 
-        <button type="button" className="rail-profile-btn" onClick={openProfileEditor} title="Profile">
-          <span className="rail-profile-avatar">
-            {avatarSrc ? (
-              <img src={avatarSrc} alt={user?.name || "Profile"} className="avatar-image" />
-            ) : (
-              user?.name?.[0]?.toUpperCase() || "?"
-            )}
-          </span>
-        </button>
+          <button type="button" className="rail-profile-btn" onClick={openProfileEditor} title="Profile">
+            <span className="rail-profile-avatar">
+              {avatarSrc ? (
+                <img src={avatarSrc} alt={user?.name || "Profile"} className="avatar-image" />
+              ) : (
+                user?.name?.[0]?.toUpperCase() || "?"
+              )}
+            </span>
+          </button>
+        </div>
       </div>
 
       <div className="sidebar-panel">

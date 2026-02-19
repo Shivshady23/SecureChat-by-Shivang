@@ -2887,6 +2887,20 @@ body {
   height: 46px;
 }
 
+.sidebar-shell .rail-footer {
+  margin-top: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-shell .rail-footer .rail-logout-btn,
+.sidebar-shell .rail-footer .rail-profile-btn {
+  margin-top: 0 !important;
+}
+
 .sidebar-shell .rail-profile-avatar {
   width: 38px;
   height: 38px;
