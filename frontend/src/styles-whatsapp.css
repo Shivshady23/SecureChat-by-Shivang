@@ -615,6 +615,11 @@ body {
   font-weight: 500;
   color: var(--whatsapp-text);
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes unread-name-glow {
@@ -638,12 +643,14 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .chat-time {
   font-size: 0.75rem;
   color: var(--whatsapp-text-secondary);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chat-time-unread {
@@ -720,18 +727,25 @@ body {
 
 .request-info {
   flex: 1;
+  min-width: 0;
 }
 
 .request-name {
   font-weight: 500;
   font-size: 0.95rem;
   margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .request-username {
   font-size: 0.85rem;
   color: var(--whatsapp-text-secondary);
   margin: 2px 0 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .request-actions {
@@ -821,23 +835,31 @@ body {
 
 .user-info {
   flex: 1;
+  min-width: 0;
 }
 
 .user-name {
   font-weight: 500;
   font-size: 0.95rem;
   margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-username {
   font-size: 0.85rem;
   color: var(--whatsapp-text-secondary);
   margin: 2px 0 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-status {
   font-size: 0.85rem;
   color: var(--whatsapp-text-secondary);
+  flex-shrink: 0;
 }
 
 .user-status.pending {
@@ -854,6 +876,7 @@ body {
   font-size: 0.85rem;
   font-weight: 600;
   transition: background 0.2s ease;
+  flex-shrink: 0;
 }
 
 .user-action-btn:hover {
