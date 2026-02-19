@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getAvatarSrc } from "../utils/avatar.js";
 import ReactionBar from "./ReactionBar";
+import { API_BASE } from "../services/api.js";
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 export default function MessageList({
@@ -26,7 +27,8 @@ export default function MessageList({
   onEditMessage,
   onReactMessage,
   editingMessageId = "",
-  customEmojis = []
+  customEmojis = [],
+  imagePreviewUrls = {}
 }) {
   const endRef = useRef(null);
   const listRef = useRef(null);
@@ -188,9 +190,47 @@ export default function MessageList({
   function getReplyPreview(msg) {
     const parent = messageById[String(msg.replyTo)];
     if (!parent) return "Original message";
+    if (parent.type === "image" || String(parent.mimeType || "").startsWith("image/")) return "Photo";
     if (parent.type === "file") return parent.fileName || "File";
     const plain = parent.encrypted ? rendered[parent._id] || "Encrypted message" : parent.content || "";
     return plain || "Message";
+  }
+
+  function isImageMessage(msg) {
+    return msg?.type === "image" || String(msg?.mimeType || "").toLowerCase().startsWith("image/");
+  }
+
+  function formatFileSize(size) {
+    const bytes = Number(size || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    const value = bytes / Math.pow(1024, index);
+    return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+  }
+
+  function getFileIcon(message) {
+    const mime = String(message?.mimeType || "").toLowerCase();
+    const fileName = String(message?.fileName || "").toLowerCase();
+    if (mime.includes("pdf") || fileName.endsWith(".pdf")) return "\uD83D\uDCC4";
+    if (mime.includes("word") || fileName.endsWith(".doc") || fileName.endsWith(".docx")) return "\uD83D\uDCDD";
+    if (mime.includes("excel") || fileName.endsWith(".xls") || fileName.endsWith(".xlsx") || fileName.endsWith(".csv")) return "\uD83D\uDCCA";
+    if (mime.includes("zip") || fileName.endsWith(".zip") || fileName.endsWith(".rar") || fileName.endsWith(".7z")) return "\uD83D\uDCE6";
+    return "\uD83D\uDCCE";
+  }
+
+  function getImageSource(message) {
+    const messageId = String(message?._id || "");
+    if (!messageId) return "";
+    if (message.encrypted) {
+      return String(imagePreviewUrls[messageId] || "");
+    }
+
+    const directUrl = String(message.fileUrl || message.content || "").trim();
+    if (directUrl.startsWith("http://") || directUrl.startsWith("https://")) return directUrl;
+    if (directUrl.startsWith("/uploads/")) return `${API_BASE}${directUrl}`;
+    if (message.fileKey) return `${API_BASE}/uploads/${message.fileKey}`;
+    return "";
   }
 
   function clearHoldTimer() {
@@ -499,10 +539,43 @@ export default function MessageList({
 
                     {msg.type === "text" && !hideReplyPlaceholderText ? (
                       <div className={`message-text ${isBigEmojiText(resolvedText) ? "message-text-big-emoji" : ""}`}>{resolvedText}</div>
+                    ) : isImageMessage(msg) ? (
+                      <div className="message-image-wrap">
+                        {getImageSource(msg) ? (
+                          <img
+                            src={getImageSource(msg)}
+                            alt={msg.fileName || "Image"}
+                            className="message-image"
+                            loading="lazy"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDownloadFile(msg);
+                            }}
+                          />
+                        ) : (
+                          <div className="message-image-unavailable">Image preview unavailable</div>
+                        )}
+                        <div className="message-image-meta">
+                          <span>{msg.fileName || "Photo"}</span>
+                          <button
+                            type="button"
+                            className="file-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDownloadFile(msg);
+                            }}
+                          >
+                            Download
+                          </button>
+                        </div>
+                      </div>
                     ) : (
                       msg.type !== "text" && (
                         <div className="message-file">
-                          <span className="file-label">{"\uD83D\uDCCE"} {msg.fileName || "File"}</span>
+                          <span className="file-label">
+                            {getFileIcon(msg)} {msg.fileName || "File"}
+                          </span>
+                          <span className="file-size">{formatFileSize(msg.fileSize || msg.size)}</span>
                           <button
                             type="button"
                             className="file-button"

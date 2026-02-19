@@ -5,7 +5,7 @@
 // - Main module logic and exports
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE, api, apiForm } from "../services/api.js";
+import { API_BASE, api, apiForm, apiUpload } from "../services/api.js";
 import {
   clearAuth,
   getUser,
@@ -28,6 +28,7 @@ import CallOverlay from "../components/CallOverlay";
 import { useCallManager } from "../hooks/useCallManager.js";
 
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
+const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 export default function Chat() {
   // UI configuration and defaults used across the chat page.
@@ -118,6 +119,9 @@ export default function Chat() {
   const [chatLockPromptBusy, setChatLockPromptBusy] = useState(false);
   const [socketInstance, setSocketInstance] = useState(null);
   const [pendingSidebarCall, setPendingSidebarCall] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [decryptedImageUrls, setDecryptedImageUrls] = useState({});
 
   // Mutable refs for sockets, cached state snapshots, and temporary timers.
   const socketRef = useRef(null);
@@ -130,6 +134,8 @@ export default function Chat() {
   const sidebarResizeStartXRef = useRef(0);
   const sidebarResizeStartWidthRef = useRef(360);
   const groupAvatarInputRef = useRef(null);
+  const decryptingImageRef = useRef(new Set());
+  const decryptedImageUrlsRef = useRef({});
 
   // Data normalization helpers.
   function normalizeUnreadCount(rawValue) {
@@ -458,7 +464,9 @@ export default function Chat() {
     const senderName = sender?.name || "New message";
     const title = chat?.type === "group" ? `${senderName} in ${chat?.name || "Group"}` : senderName;
     const body =
-      message.type === "file"
+      message.type === "image"
+        ? "Sent a photo"
+        : message.type === "file"
         ? `Sent a file${message.fileName ? `: ${message.fileName}` : ""}`
         : message.encrypted
         ? "New encrypted message"
@@ -542,6 +550,67 @@ export default function Chat() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    decryptedImageUrlsRef.current = decryptedImageUrls;
+  }, [decryptedImageUrls]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const encryptedImageMessages = messages.filter(
+      (message) => message?.type === "image" && message?.encrypted && message?.fileKey
+    );
+    const activeIds = new Set(encryptedImageMessages.map((message) => String(message._id)));
+
+    setDecryptedImageUrls((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [messageId, url] of Object.entries(prev)) {
+        if (activeIds.has(String(messageId))) continue;
+        URL.revokeObjectURL(url);
+        delete next[messageId];
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+
+    for (const message of encryptedImageMessages) {
+      const messageId = String(message._id);
+      if (!messageId || decryptingImageRef.current.has(messageId) || decryptedImageUrlsRef.current[messageId]) continue;
+      decryptingImageRef.current.add(messageId);
+
+      (async () => {
+        try {
+          const blob = await fetchMessageFileBlob(message);
+          if (cancelled) return;
+          const objectUrl = URL.createObjectURL(blob);
+          setDecryptedImageUrls((prev) => {
+            if (prev[messageId]) {
+              URL.revokeObjectURL(objectUrl);
+              return prev;
+            }
+            return { ...prev, [messageId]: objectUrl };
+          });
+        } catch {
+          // Ignore preview failures for encrypted media.
+        } finally {
+          decryptingImageRef.current.delete(messageId);
+        }
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, user.id]);
+
+  useEffect(() => {
+    return () => {
+      for (const objectUrl of Object.values(decryptedImageUrlsRef.current || {})) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     notificationSettingsRef.current = notificationSettings;
@@ -1377,6 +1446,7 @@ export default function Chat() {
     chat,
     type,
     content = "",
+    fileUrl = "",
     fileName = "",
     mimeType = "",
     size = 0,
@@ -1388,11 +1458,13 @@ export default function Chat() {
       chatId: chat._id,
       senderId: user.id,
       type,
-      content,
+      content: content || fileUrl || "",
       encrypted: false,
+      fileUrl: fileUrl || "",
       fileName,
       mimeType,
       size,
+      fileSize: size,
       readBy: [user.id],
       deliveredTo: [user.id],
       createdAt: new Date().toISOString(),
@@ -1622,14 +1694,19 @@ export default function Chat() {
     socketRef.current?.emit("typing", { chatId: selectedChatId, isTyping });
   }
 
-  async function sendFile(file) {
+  async function sendFile(file, { uploadType = "file" } = {}) {
     const chat = chats.find((c) => String(c._id) === String(selectedChatId));
     if (!chat) return;
+    const normalizedMime = String(file?.type || "").toLowerCase();
+    const isImageUpload = uploadType === "image" || IMAGE_MIME_TYPES.has(normalizedMime);
+    const messageType = isImageUpload ? "image" : "file";
+    const localPreviewUrl = isImageUpload ? URL.createObjectURL(file) : "";
 
     try {
       const pendingMessage = createPendingMessage({
         chat,
-        type: "file",
+        type: messageType,
+        fileUrl: localPreviewUrl,
         fileName: file.name,
         mimeType: file.type,
         size: file.size,
@@ -1637,58 +1714,112 @@ export default function Chat() {
       });
 
       const commit = async () => {
-        if (chat.type === "direct") {
-          const direct = await getDirectChatPeer(chat);
-          const buffer = await file.arrayBuffer();
-          const encryptedPayload = await encryptForReceiver({
-            senderId: user.id,
-            receiverId: direct.receiverId,
-            chatId: chat._id,
-            senderPublicSpkiB64: direct.senderPublicKeySpkiB64,
-            receiverPublicSpkiB64: direct.receiverPublicKeySpkiB64,
-            binaryData: buffer
-          });
-          const blob = new Blob([base64ToArrayBuffer(encryptedPayload.ciphertextB64)]);
+        setIsUploadingAttachment(true);
+        setUploadProgress(0);
+
+        try {
+          if (chat.type === "direct") {
+            const direct = await getDirectChatPeer(chat);
+            const buffer = await file.arrayBuffer();
+            const encryptedPayload = await encryptForReceiver({
+              senderId: user.id,
+              receiverId: direct.receiverId,
+              chatId: chat._id,
+              senderPublicSpkiB64: direct.senderPublicKeySpkiB64,
+              receiverPublicSpkiB64: direct.receiverPublicKeySpkiB64,
+              binaryData: buffer
+            });
+            const blob = new Blob([base64ToArrayBuffer(encryptedPayload.ciphertextB64)]);
+            const form = new FormData();
+            form.append("file", blob, "encrypted.bin");
+            form.append("uploadType", messageType);
+            form.append("originalName", file.name || "file");
+            form.append("originalMimeType", file.type || "application/octet-stream");
+            const upload = await apiUpload("/api/upload", form, {
+              onProgress: setUploadProgress
+            });
+
+            socketRef.current?.emit("chat-message", {
+              roomId: String(chat._id),
+              message: {
+                type: messageType,
+                fileUrl: upload.url,
+                fileName: file.name,
+                fileSize: file.size,
+                senderId: user.id,
+                receiverId: direct.receiverId,
+                timestamp: Date.now()
+              }
+            });
+
+            return api(`/api/messages/${chat._id}`, {
+              method: "POST",
+              body: JSON.stringify({
+                type: messageType,
+                encrypted: true,
+                receiverId: direct.receiverId,
+                iv: encryptedPayload.ivB64,
+                wrappedKeyB64: encryptedPayload.wrappedKeyB64,
+                senderWrappedKeyB64: encryptedPayload.senderWrappedKeyB64,
+                aadB64: encryptedPayload.aadB64,
+                clientTs: encryptedPayload.clientTs,
+                clientMsgId: encryptedPayload.clientMsgId,
+                fileKey: upload.fileKey,
+                fileUrl: upload.url,
+                content: upload.url,
+                fileName: file.name,
+                mimeType: file.type,
+                fileSize: file.size,
+                size: file.size,
+                replyTo: replyToMessageId || undefined
+              })
+            });
+          }
+
           const form = new FormData();
-          form.append("file", blob, "encrypted.bin");
-          const upload = await apiForm("/api/upload", form);
+          form.append("file", file, file.name);
+          form.append("uploadType", messageType);
+          form.append("originalName", file.name || "file");
+          form.append("originalMimeType", file.type || "application/octet-stream");
+          const upload = await apiUpload("/api/upload", form, {
+            onProgress: setUploadProgress
+          });
+
+          socketRef.current?.emit("chat-message", {
+            roomId: String(chat._id),
+            message: {
+              type: messageType,
+              fileUrl: upload.url,
+              fileName: upload.fileName,
+              fileSize: upload.size,
+              senderId: user.id,
+              receiverId: null,
+              timestamp: Date.now()
+            }
+          });
 
           return api(`/api/messages/${chat._id}`, {
             method: "POST",
             body: JSON.stringify({
-              type: "file",
-              encrypted: true,
-              receiverId: direct.receiverId,
-              iv: encryptedPayload.ivB64,
-              wrappedKeyB64: encryptedPayload.wrappedKeyB64,
-              senderWrappedKeyB64: encryptedPayload.senderWrappedKeyB64,
-              aadB64: encryptedPayload.aadB64,
-              clientTs: encryptedPayload.clientTs,
-              clientMsgId: encryptedPayload.clientMsgId,
+              type: messageType,
+              encrypted: false,
               fileKey: upload.fileKey,
-              fileName: file.name,
-              mimeType: file.type,
-              size: file.size,
+              fileUrl: upload.url,
+              content: upload.url,
+              fileName: upload.fileName,
+              mimeType: upload.mimeType,
+              fileSize: upload.size,
+              size: upload.size,
               replyTo: replyToMessageId || undefined
             })
           });
+        } finally {
+          setIsUploadingAttachment(false);
+          setUploadProgress(0);
+          if (localPreviewUrl) {
+            URL.revokeObjectURL(localPreviewUrl);
+          }
         }
-
-        const form = new FormData();
-        form.append("file", file, file.name);
-        const upload = await apiForm("/api/upload", form);
-        return api(`/api/messages/${chat._id}`, {
-          method: "POST",
-          body: JSON.stringify({
-            type: "file",
-            encrypted: false,
-            fileKey: upload.fileKey,
-            fileName: upload.fileName,
-            mimeType: upload.mimeType,
-            size: upload.size,
-            replyTo: replyToMessageId || undefined
-          })
-        });
       };
 
       queueMessageSend({
@@ -1834,6 +1965,7 @@ export default function Chat() {
 
   function getMessagePreview(msg) {
     if (!msg) return "";
+    if (msg.type === "image") return msg.fileName ? `Photo: ${msg.fileName}` : "Photo";
     if (msg.type === "file") return msg.fileName || "File";
     if (msg.encrypted) return rendered[msg._id] || "Encrypted message";
     return msg.content || "Message";
@@ -2047,6 +2179,7 @@ export default function Chat() {
               onReactMessage={toggleReaction}
               editingMessageId={editingMessageId}
               customEmojis={customEmojis}
+              imagePreviewUrls={decryptedImageUrls}
             />
 
             <MessageInput
@@ -2076,6 +2209,8 @@ export default function Chat() {
                   : null
               }
               onCancelEdit={() => setEditingMessageId("")}
+              isUploading={isUploadingAttachment}
+              uploadProgress={uploadProgress}
             />
 
             {showInfo && (

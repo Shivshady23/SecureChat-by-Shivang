@@ -9,6 +9,62 @@ import EmojiPickerPanel from "./EmojiPickerPanel";
 import { fetchEmojiMeta, trackRecentEmoji } from "../services/emoji.js";
 
 const MAX_SUGGESTIONS = 8;
+const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
+const BLOCKED_FILE_EXTENSIONS = new Set([
+  ".exe",
+  ".msi",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".dll",
+  ".scr",
+  ".ps1",
+  ".sh",
+  ".jar",
+  ".apk"
+]);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+function getFileExtension(name = "") {
+  const value = String(name || "").toLowerCase();
+  const idx = value.lastIndexOf(".");
+  return idx >= 0 ? value.slice(idx) : "";
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  const scaled = value / Math.pow(1024, index);
+  return `${scaled >= 10 || index === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
+}
+
+function validateSelectedFile(file, uploadType) {
+  if (!file) return { ok: false, message: "No file selected." };
+  const mimeType = String(file.type || "").toLowerCase();
+  const extension = getFileExtension(file.name);
+
+  if (uploadType === "image") {
+    if (!IMAGE_MIME_TYPES.has(mimeType) && !IMAGE_EXTENSIONS.includes(extension)) {
+      return { ok: false, message: "Only jpg, jpeg, png, webp and gif images are allowed." };
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      return { ok: false, message: "Image size must be 10MB or smaller." };
+    }
+    return { ok: true };
+  }
+
+  if (BLOCKED_FILE_EXTENSIONS.has(extension)) {
+    return { ok: false, message: "This file type is not allowed." };
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    return { ok: false, message: "File size must be 50MB or smaller." };
+  }
+  return { ok: true };
+}
 
 function getAutocompleteMatch(text, cursorPos) {
   const before = text.slice(0, cursorPos);
@@ -84,12 +140,16 @@ export default function MessageInput({
   replyTarget = null,
   onCancelReply,
   editTarget = null,
-  onCancelEdit
+  onCancelEdit,
+  isUploading = false,
+  uploadProgress = 0
 }) {
   const [text, setText] = useState("");
   const [showEmojis, setShowEmojis] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
+  const [pendingUploadType, setPendingUploadType] = useState("file");
   const [previewUrl, setPreviewUrl] = useState("");
+  const [fileError, setFileError] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [recentEmojis, setRecentEmojis] = useState([]);
   const [customEmojis, setCustomEmojis] = useState([]);
@@ -102,6 +162,7 @@ export default function MessageInput({
   const textareaRef = useRef(null);
   const composerRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
+  const uploadCycleRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -165,6 +226,17 @@ export default function MessageInput({
     };
   }, []);
 
+  useEffect(() => {
+    if (isUploading) {
+      uploadCycleRef.current = true;
+      return;
+    }
+    if (uploadCycleRef.current) {
+      uploadCycleRef.current = false;
+      clearPendingFile();
+    }
+  }, [isUploading]);
+
   function autoResizeTextarea() {
     const input = textareaRef.current;
     if (!input) return;
@@ -177,21 +249,29 @@ export default function MessageInput({
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl("");
     setPendingFile(null);
+    setPendingUploadType("file");
+    setFileError("");
   }
 
-  function setPendingUpload(file) {
+  function setPendingUpload(file, uploadType = "file") {
     if (!file) return;
+    const validation = validateSelectedFile(file, uploadType);
+    if (!validation.ok) {
+      setFileError(validation.message);
+      return;
+    }
     clearPendingFile();
     setPendingFile(file);
-    if (file.type?.startsWith("image/")) {
+    setPendingUploadType(uploadType === "image" ? "image" : "file");
+    setFileError("");
+    if (uploadType === "image") {
       setPreviewUrl(URL.createObjectURL(file));
     }
   }
 
   function sendPendingFile() {
-    if (!pendingFile) return;
-    onSendFile(pendingFile);
-    clearPendingFile();
+    if (!pendingFile || isUploading) return;
+    onSendFile(pendingFile, { uploadType: pendingUploadType });
   }
 
   function handleSubmit(e) {
@@ -351,9 +431,10 @@ export default function MessageInput({
   }
 
   function handleFileSelect(e) {
+    const uploadType = String(e.target.dataset.uploadType || "file");
     const file = e.target.files?.[0];
     if (file) {
-      setPendingUpload(file);
+      setPendingUpload(file, uploadType);
       e.target.value = "";
     }
   }
@@ -372,7 +453,10 @@ export default function MessageInput({
     e.preventDefault();
     setDragActive(false);
     const file = e.dataTransfer?.files?.[0];
-    if (file) setPendingUpload(file);
+    if (file) {
+      const uploadType = String(file.type || "").startsWith("image/") ? "image" : "file";
+      setPendingUpload(file, uploadType);
+    }
   }
 
   const pickerTheme = document.documentElement.classList.contains("theme-dark") ? "dark" : "light";
@@ -419,18 +503,31 @@ export default function MessageInput({
           {previewUrl ? (
             <img src={previewUrl} alt="Preview" className="upload-preview-image" />
           ) : (
-            <div className="upload-preview-file">{pendingFile.name}</div>
+            <div className="upload-preview-file">
+              <div className="upload-preview-file-name">{pendingFile.name}</div>
+              <div className="upload-preview-file-meta">{formatBytes(pendingFile.size)}</div>
+            </div>
+          )}
+          {isUploading && (
+            <div className="upload-progress-block">
+              <div className="upload-progress-text">Uploading... {uploadProgress}%</div>
+              <div className="upload-progress-track">
+                <div className="upload-progress-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            </div>
           )}
           <div className="upload-preview-actions">
-            <button type="button" className="btn-secondary" onClick={clearPendingFile}>
+            <button type="button" className="btn-secondary" onClick={clearPendingFile} disabled={isUploading}>
               Cancel
             </button>
-            <button type="button" className="btn-primary" onClick={sendPendingFile}>
+            <button type="button" className="btn-primary" onClick={sendPendingFile} disabled={isUploading}>
               Send
             </button>
           </div>
         </div>
       )}
+
+      {fileError && <div className="composer-file-error">{fileError}</div>}
 
       <EmojiPickerPanel
         isOpen={showEmojis}
@@ -485,10 +582,11 @@ export default function MessageInput({
           {"\uD83D\uDDBC\uFE0F"}
           <input
             type="file"
-            accept="image/*"
+            data-upload-type="image"
+            accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
             onChange={handleFileSelect}
             style={{ display: "none" }}
-            disabled={Boolean(editTarget?.messageId)}
+            disabled={Boolean(editTarget?.messageId) || isUploading}
           />
         </label>
 
@@ -496,9 +594,10 @@ export default function MessageInput({
           {"\uD83D\uDCCE"}
           <input
             type="file"
+            data-upload-type="file"
             onChange={handleFileSelect}
             style={{ display: "none" }}
-            disabled={Boolean(editTarget?.messageId)}
+            disabled={Boolean(editTarget?.messageId) || isUploading}
           />
         </label>
       </div>
@@ -543,7 +642,12 @@ export default function MessageInput({
         }}
       />
 
-      <button type="submit" className="send-button" title={editTarget?.messageId ? "Save edit" : "Send message"}>
+      <button
+        type="submit"
+        className="send-button"
+        title={editTarget?.messageId ? "Save edit" : "Send message"}
+        disabled={isUploading}
+      >
         {editTarget?.messageId ? "\u2714" : "\u21AA\uFE0F"}
       </button>
     </form>

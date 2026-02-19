@@ -124,12 +124,14 @@ router.post("/:chatId", authRequired, async (req, res) => {
     const {
       type,
       content,
+      fileUrl,
       encrypted,
       iv,
       ivB64,
       fileKey,
       fileName,
       mimeType,
+      fileSize,
       size,
       replyTo,
       receiverId,
@@ -147,8 +149,11 @@ router.post("/:chatId", authRequired, async (req, res) => {
       return res.status(404).json({ message: "Chat not found" });
     }
 
-    if (!type || !["text", "file"].includes(type)) {
+    if (!type || !["text", "image", "file"].includes(type)) {
       return res.status(400).json({ message: "Invalid type" });
+    }
+    if (type !== "text" && !String(fileKey || "").trim()) {
+      return res.status(400).json({ message: "fileKey is required for file/image messages" });
     }
     if (chat.type === "direct" && !Boolean(encrypted)) {
       return res.status(400).json({ message: "Direct messages must be encrypted" });
@@ -218,12 +223,26 @@ router.post("/:chatId", authRequired, async (req, res) => {
       replyToId = parent._id;
     }
 
+    const normalizedSize = Number.isFinite(Number(fileSize))
+      ? Number(fileSize)
+      : Number.isFinite(Number(size))
+      ? Number(size)
+      : 0;
+    const normalizedFileUrl =
+      String(fileUrl || content || "").trim() ||
+      (fileKey ? `/uploads/${fileKey}` : "");
+
     const message = await Message.create({
       chatId: chat._id,
       senderId: req.user.id,
       receiverId: directReceiverId || null,
       type,
-      content: Boolean(encrypted) && type === "text" ? cipherValue : content || "",
+      content:
+        Boolean(encrypted) && type === "text"
+          ? cipherValue
+          : type === "text"
+          ? content || ""
+          : normalizedFileUrl,
       encrypted: Boolean(encrypted),
       iv: ivValue,
       ciphertextB64: type === "text" ? cipherValue || "" : "",
@@ -234,9 +253,11 @@ router.post("/:chatId", authRequired, async (req, res) => {
       clientMsgId: clientMsgId || "",
       integrityHash: integrityHash || "",
       fileKey: fileKey || "",
+      fileUrl: normalizedFileUrl,
       fileName: fileName || "",
       mimeType: mimeType || "",
-      size: size || 0,
+      size: normalizedSize,
+      fileSize: normalizedSize,
       readBy: [req.user.id],
       deliveredTo: [req.user.id],
       disappearsAfterReadAll: Boolean(chat.vanishMode),

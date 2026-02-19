@@ -52,5 +52,44 @@ export async function apiForm(path, formData) {
   return res.json();
 }
 
+export function apiUpload(path, formData, { onProgress } = {}) {
+  const token = getToken();
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}${path}`, true);
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || typeof onProgress !== "function") return;
+      const progress = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      onProgress(progress);
+    };
+
+    xhr.onerror = () => reject(new Error("Upload failed"));
+    xhr.onabort = () => reject(new Error("Upload canceled"));
+    xhr.onload = () => {
+      const raw = xhr.responseText || "{}";
+      const parsed = (() => {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return {};
+        }
+      })();
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed);
+      } else {
+        reject(new Error(parsed.message || "Upload failed"));
+      }
+    };
+
+    xhr.send(formData);
+  });
+}
+
 export { API_BASE };
 

@@ -353,6 +353,21 @@ export function initSocket(server, { origin }) {
       socket.to(chatId).emit("typing", { chatId, userId, isTyping: Boolean(isTyping) });
     });
 
+    socket.on("chat-message", async (payload = {}) => {
+      const roomId = String(payload.roomId || "").trim();
+      const message = payload.message || null;
+      if (!roomId || !message) return;
+
+      const isMember = await Chat.exists({ _id: roomId, members: userId });
+      if (!isMember) return;
+
+      socket.to(roomId).emit("chat-message", {
+        roomId,
+        fromUserId: String(userId),
+        message
+      });
+    });
+
     socket.on("message:read", async ({ chatId, messageIds }) => {
       if (!Array.isArray(messageIds) || messageIds.length === 0) return;
       await Message.updateMany(
