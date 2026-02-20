@@ -5,7 +5,7 @@
 // - Main module logic and exports
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { AiOutlineCheck, AiOutlineCheckCircle, AiOutlineCheckSquare } from "react-icons/ai";
+import { AiFillCheckCircle, AiOutlineCheck, AiOutlineCheckCircle } from "react-icons/ai";
 import { getAvatarSrc } from "../utils/avatar.js";
 import ReactionBar from "./ReactionBar";
 import { API_BASE } from "../services/api.js";
@@ -180,10 +180,10 @@ function MessageList({
     const readByOthers = Math.max(0, readCount - 1);
 
     if (readByOthers >= requiredOthers) {
-      return { className: "read", Icon: AiOutlineCheckCircle, label: "Read" };
+      return { className: "read", Icon: AiFillCheckCircle, label: "Read" };
     }
     if (deliveredToOthers >= requiredOthers) {
-      return { className: "delivered", Icon: AiOutlineCheckSquare, label: "Delivered" };
+      return { className: "delivered", Icon: AiOutlineCheckCircle, label: "Delivered" };
     }
     return { className: "sent", Icon: AiOutlineCheck, label: "Sent" };
   };
