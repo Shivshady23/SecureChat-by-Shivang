@@ -40,7 +40,7 @@ describe("MessageList", () => {
     expect(screen.getByAltText("test-image.png")).toBeInTheDocument();
   });
 
-  test("renders audio controls for audio files", () => {
+  test("renders audio file as generic file message without inline player", () => {
     const { container } = render(
       <MessageList
         {...baseProps}
@@ -61,6 +61,8 @@ describe("MessageList", () => {
       />
     );
 
-    expect(container.querySelector("audio.message-audio-player")).toBeInTheDocument();
+    expect(container.querySelector("audio.message-audio-player")).not.toBeInTheDocument();
+    expect(screen.getByText(/voice\.webm/i)).toBeInTheDocument();
+    expect(container.querySelector("button.file-button")).toBeInTheDocument();
   });
 });
