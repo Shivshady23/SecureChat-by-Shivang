@@ -1107,6 +1107,47 @@ export default function Chat() {
     };
   }, [chatFilter, lockedAccessDigest, user.id]);
 
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const clickableSelector = [
+      "button:not(:disabled)",
+      "[role='button']:not([aria-disabled='true'])",
+      ".chat-item",
+      ".chat-list-menu-item",
+      ".chat-header-icon-btn",
+      ".message-bubble",
+      ".message-reaction-chip",
+      ".file-button",
+      ".action-button",
+      ".send-button"
+    ].join(",");
+
+    const editableSelector = "input, textarea, [contenteditable='true'], .emoji-mart, .emoji-picker";
+
+    const onContextMenuAsPrimaryAction = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(editableSelector)) return;
+
+      const clickable = target.closest(clickableSelector);
+      if (!clickable) return;
+
+      event.preventDefault();
+      clickable.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        })
+      );
+    };
+
+    document.addEventListener("contextmenu", onContextMenuAsPrimaryAction, true);
+    return () => {
+      document.removeEventListener("contextmenu", onContextMenuAsPrimaryAction, true);
+    };
+  }, []);
+
   function openLockedChatsGate() {
     openChatLockPrompt({
       mode: "accessLocked",
