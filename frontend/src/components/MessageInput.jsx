@@ -156,9 +156,6 @@ export default function MessageInput({
   const [emojiIndex, setEmojiIndex] = useState([]);
   const [autocomplete, setAutocomplete] = useState(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [recorderError, setRecorderError] = useState("");
 
   const typingTimeout = useRef(null);
   const autocompleteDebounceRef = useRef(null);
@@ -166,10 +163,6 @@ export default function MessageInput({
   const composerRef = useRef(null);
   const selectionRef = useRef({ start: 0, end: 0 });
   const uploadCycleRef = useRef(false);
-  const recorderRef = useRef(null);
-  const recorderStreamRef = useRef(null);
-  const recorderTimerRef = useRef(null);
-  const recorderChunksRef = useRef([]);
 
   useEffect(() => {
     return () => {
@@ -234,23 +227,6 @@ export default function MessageInput({
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (recorderTimerRef.current) {
-        clearInterval(recorderTimerRef.current);
-      }
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        try {
-          recorder.stop();
-        } catch {}
-      }
-      if (recorderStreamRef.current) {
-        recorderStreamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     if (isUploading) {
       uploadCycleRef.current = true;
       return;
@@ -275,20 +251,6 @@ export default function MessageInput({
     setPendingFile(null);
     setPendingUploadType("file");
     setFileError("");
-  }
-
-  function resetRecorderState() {
-    setIsRecordingAudio(false);
-    setRecordingSeconds(0);
-    if (recorderTimerRef.current) {
-      clearInterval(recorderTimerRef.current);
-      recorderTimerRef.current = null;
-    }
-    if (recorderStreamRef.current) {
-      recorderStreamRef.current.getTracks().forEach((track) => track.stop());
-      recorderStreamRef.current = null;
-    }
-    recorderRef.current = null;
   }
 
   function setPendingUpload(file, uploadType = "file") {
@@ -497,65 +459,6 @@ export default function MessageInput({
     }
   }
 
-  async function startVoiceRecording() {
-    if (isUploading) return;
-    setRecorderError("");
-    setFileError("");
-    clearPendingFile();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      recorderStreamRef.current = stream;
-      recorderRef.current = recorder;
-      recorderChunksRef.current = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recorderChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onerror = () => {
-        setRecorderError("Voice recording failed.");
-      };
-
-      recorder.onstop = () => {
-        const chunks = recorderChunksRef.current;
-        const mimeType = recorder.mimeType || "audio/webm";
-        if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: mimeType });
-          const file = new File([blob], `voice-${Date.now()}.webm`, { type: mimeType });
-          setPendingUpload(file, "file");
-        }
-        recorderChunksRef.current = [];
-        resetRecorderState();
-      };
-
-      recorder.start();
-      setIsRecordingAudio(true);
-      setRecordingSeconds(0);
-      recorderTimerRef.current = setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
-      }, 1000);
-    } catch (err) {
-      setRecorderError(err?.message || "Microphone permission denied.");
-      resetRecorderState();
-    }
-  }
-
-  function stopVoiceRecording() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
-      resetRecorderState();
-      return;
-    }
-    try {
-      recorder.stop();
-    } catch {
-      resetRecorderState();
-    }
-  }
-
   const pickerTheme = document.documentElement.classList.contains("theme-dark") ? "dark" : "light";
   const activeSuggestion = useMemo(
     () => (autocomplete ? autocomplete.suggestions[activeSuggestionIndex] : null),
@@ -625,13 +528,6 @@ export default function MessageInput({
       )}
 
       {fileError && <div className="composer-file-error">{fileError}</div>}
-      {recorderError && <div className="composer-file-error">{recorderError}</div>}
-      {isRecordingAudio && (
-        <div className="composer-recording-banner">
-          <span className="recording-dot" />
-          <span>Recording voice: {recordingSeconds}s</span>
-        </div>
-      )}
 
       <EmojiPickerPanel
         isOpen={showEmojis}
@@ -705,15 +601,6 @@ export default function MessageInput({
           />
         </label>
 
-        <button
-          type="button"
-          className={`action-button ${isRecordingAudio ? "recording-active" : ""}`}
-          title={isRecordingAudio ? "Stop recording" : "Record voice message"}
-          onClick={isRecordingAudio ? stopVoiceRecording : startVoiceRecording}
-          disabled={Boolean(editTarget?.messageId) || isUploading}
-        >
-          {isRecordingAudio ? "\u25A0" : "\uD83C\uDFA4"}
-        </button>
       </div>
 
       <textarea

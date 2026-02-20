@@ -234,15 +234,6 @@ function MessageList({
     return "";
   }
 
-  function getMediaSource(message) {
-    if (message?.encrypted) return "";
-    const directUrl = String(message?.fileUrl || message?.content || "").trim();
-    if (directUrl.startsWith("http://") || directUrl.startsWith("https://")) return directUrl;
-    if (directUrl.startsWith("/uploads/")) return `${API_BASE}${directUrl}`;
-    if (message?.fileKey) return `${API_BASE}/uploads/${message.fileKey}`;
-    return "";
-  }
-
   function clearHoldTimer() {
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
@@ -586,11 +577,6 @@ function MessageList({
                             {getFileIcon(msg)} {msg.fileName || "File"}
                           </span>
                           <span className="file-size">{formatFileSize(msg.fileSize || msg.size)}</span>
-                          {String(msg.mimeType || "").toLowerCase().startsWith("audio/") && getMediaSource(msg) ? (
-                            <audio className="message-audio-player" controls preload="none">
-                              <source src={getMediaSource(msg)} type={msg.mimeType || "audio/webm"} />
-                            </audio>
-                          ) : null}
                           <button
                             type="button"
                             className="file-button"
