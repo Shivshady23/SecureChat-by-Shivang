@@ -30,6 +30,7 @@ import { useCallManager } from "../hooks/useCallManager.js";
 
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const UI_SILENT_REFRESH_MS = 10 * 1000;
 
 export default function Chat() {
   // UI configuration and defaults used across the chat page.
@@ -136,6 +137,7 @@ export default function Chat() {
   const groupAvatarInputRef = useRef(null);
   const decryptingImageRef = useRef(new Set());
   const decryptedImageUrlsRef = useRef({});
+  const silentRefreshRunningRef = useRef(false);
 
   // Data normalization helpers.
   function normalizeUnreadCount(rawValue) {
@@ -1028,6 +1030,82 @@ export default function Chat() {
     const res = await api(path);
     setChats((res.chats || []).map((chat) => withChatUnread(chat)));
   }
+
+  async function refreshBootstrapSilently() {
+    const [uRes, rRes, eRes] = await Promise.all([
+      api("/api/users"),
+      api("/api/requests"),
+      api("/api/emojis").catch(() => ({ custom: [] }))
+    ]);
+    setUsers(Array.isArray(uRes?.users) ? uRes.users : []);
+    setRequests(rRes || { incoming: [], outgoing: [] });
+    setCustomEmojis(Array.isArray(eRes?.custom) ? eRes.custom : []);
+  }
+
+  async function refreshMessagesSilently(chatId = selectedChatIdRef.current) {
+    const normalizedChatId = String(chatId || "");
+    if (!normalizedChatId) return;
+    const res = await api(`/api/messages/${normalizedChatId}`);
+    if (String(selectedChatIdRef.current) !== normalizedChatId) return;
+
+    const serverMessages = Array.isArray(res?.messages) ? res.messages : [];
+    setMessages((prev) => mergeMessages(prev, serverMessages));
+    setChats((prev) =>
+      prev.map((chat) =>
+        String(chat._id) === normalizedChatId ? { ...chat, unreadCount: 0 } : chat
+      )
+    );
+
+    const unread = serverMessages.filter((message) => !message.readBy?.includes(user.id)).map((message) => message._id);
+    if (unread.length) {
+      await api(`/api/messages/${normalizedChatId}/read`, {
+        method: "POST",
+        body: JSON.stringify({ messageIds: unread })
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    let cancelled = false;
+
+    async function runSilentRefresh() {
+      if (cancelled || silentRefreshRunningRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      silentRefreshRunningRef.current = true;
+      try {
+        const jobs = [
+          refreshBootstrapSilently(),
+          ...(chatFilter === "locked" && !lockedAccessDigest ? [] : [refreshChats(chatFilter, lockedAccessDigest)]),
+          ...(selectedChatIdRef.current ? [refreshMessagesSilently(selectedChatIdRef.current)] : [])
+        ];
+        await Promise.allSettled(jobs);
+      } finally {
+        silentRefreshRunningRef.current = false;
+      }
+    }
+
+    const onFocus = () => {
+      runSilentRefresh();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        runSilentRefresh();
+      }
+    };
+
+    const intervalId = window.setInterval(runSilentRefresh, UI_SILENT_REFRESH_MS);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [chatFilter, lockedAccessDigest, user.id]);
 
   function openLockedChatsGate() {
     openChatLockPrompt({
