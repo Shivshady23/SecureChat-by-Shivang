@@ -503,9 +503,8 @@ function MessageList({
                     } animate-entry`}
                     onClick={() => {
                       if (suppressNextClickRef.current) return;
-                      onToggleSelectMessage?.(msg);
                     }}
-                    onDoubleClick={() => onReactMessage?.(msg, "\u2764\uFE0F")}
+                    onDoubleClick={() => onToggleSelectMessage?.(msg)}
                     onContextMenu={(event) => handleBubbleContextMenu(event, msg)}
                     onMouseEnter={(event) => {
                       if (typeof window !== "undefined" && window.matchMedia("(hover: hover)").matches) {
@@ -528,7 +527,7 @@ function MessageList({
                         onToggleSelectMessage?.(msg);
                       }
                     }}
-                    title="Tap to select, hold for quick actions"
+                    title="Double-click to select, hold for quick actions"
                   >
                     {!isOwn && isClusterStart && <div className="message-sender-name">{sender?.name || "User"}</div>}
                     {msg.replyTo && (
