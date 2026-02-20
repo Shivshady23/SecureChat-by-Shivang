@@ -19,7 +19,6 @@ import requestRoutes from "./routes/requests.js";
 import chatRoutes from "./routes/chats.js";
 import messageRoutes from "./routes/messages.js";
 import uploadRoutes from "./routes/upload.js";
-import uploadVoiceRoutes from "./routes/uploadVoice.js";
 import emojiRoutes from "./routes/emojis.js";
 
 const DEFAULT_DEV_ORIGINS = [
@@ -161,9 +160,6 @@ export function createApp({ corsOrigin } = {}) {
   app.use(requestSanitizer);
   app.use(apiLimiter);
 
-  app.use("/uploads/voice", (req, res) => {
-    return res.status(403).json({ message: "Voice files require authorized access." });
-  });
   app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
   app.get("/", (req, res) => {
@@ -176,7 +172,6 @@ export function createApp({ corsOrigin } = {}) {
   app.use("/api/chats", chatRoutes);
   app.use("/api/messages", messageRoutes);
   app.use("/api/upload", uploadRoutes);
-  app.use("/api/upload-voice", uploadVoiceRoutes);
   app.use("/api/emojis", emojiRoutes);
 
   app.use((err, req, res, next) => {

@@ -1554,7 +1554,6 @@ export default function Chat() {
     fileName = "",
     mimeType = "",
     size = 0,
-    duration = 0,
     replyTo = null
   }) {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1570,7 +1569,6 @@ export default function Chat() {
       mimeType,
       size,
       fileSize: size,
-      duration: Number(duration) || 0,
       readBy: [user.id],
       deliveredTo: [user.id],
       createdAt: new Date().toISOString(),
@@ -1800,15 +1798,13 @@ export default function Chat() {
     socketRef.current?.emit("typing", { chatId: selectedChatId, isTyping });
   }
 
-  async function sendFile(file, { uploadType = "file", duration = 0 } = {}) {
+  async function sendFile(file, { uploadType = "file" } = {}) {
     const chat = chats.find((c) => String(c._id) === String(selectedChatId));
     if (!chat) return;
     const normalizedMime = String(file?.type || "").toLowerCase();
-    const isVoiceUpload = uploadType === "voice";
     const isImageUpload = uploadType === "image" || IMAGE_MIME_TYPES.has(normalizedMime);
-    const messageType = isVoiceUpload ? "voice" : isImageUpload ? "image" : "file";
-    const normalizedDuration = Math.max(1, Math.min(120, Math.round(Number(duration) || 0)));
-    const localPreviewUrl = isImageUpload || isVoiceUpload ? URL.createObjectURL(file) : "";
+    const messageType = isImageUpload ? "image" : "file";
+    const localPreviewUrl = isImageUpload ? URL.createObjectURL(file) : "";
 
     try {
       const pendingMessage = createPendingMessage({
@@ -1818,7 +1814,6 @@ export default function Chat() {
         fileName: file.name,
         mimeType: file.type,
         size: file.size,
-        duration: messageType === "voice" ? normalizedDuration : 0,
         replyTo: replyToMessageId
       });
 
@@ -1827,9 +1822,7 @@ export default function Chat() {
         setUploadProgress(0);
 
         try {
-          const shouldEncryptBinary = chat.type === "direct" && messageType !== "voice";
-
-          if (shouldEncryptBinary) {
+          if (chat.type === "direct") {
             const direct = await getDirectChatPeer(chat);
             const buffer = await file.arrayBuffer();
             const encryptedPayload = await encryptForReceiver({
@@ -1857,7 +1850,6 @@ export default function Chat() {
                 fileUrl: upload.url,
                 fileName: file.name,
                 fileSize: file.size,
-                duration: messageType === "voice" ? normalizedDuration : 0,
                 senderId: user.id,
                 receiverId: direct.receiverId,
                 timestamp: Date.now()
@@ -1883,7 +1875,6 @@ export default function Chat() {
                 mimeType: file.type,
                 fileSize: file.size,
                 size: file.size,
-                duration: messageType === "voice" ? normalizedDuration : 0,
                 replyTo: replyToMessageId || undefined
               })
             });
@@ -1891,13 +1882,10 @@ export default function Chat() {
 
           const form = new FormData();
           form.append("file", file, file.name);
-          if (messageType !== "voice") {
-            form.append("uploadType", messageType);
-          }
+          form.append("uploadType", messageType);
           form.append("originalName", file.name || "file");
-          form.append("originalMimeType", file.type || (messageType === "voice" ? "audio/webm" : "application/octet-stream"));
-          const uploadPath = messageType === "voice" ? "/api/upload-voice" : "/api/upload";
-          const upload = await apiUpload(uploadPath, form, {
+          form.append("originalMimeType", file.type || "application/octet-stream");
+          const upload = await apiUpload("/api/upload", form, {
             onProgress: setUploadProgress
           });
 
@@ -1908,7 +1896,6 @@ export default function Chat() {
               fileUrl: upload.url,
               fileName: upload.fileName,
               fileSize: upload.size,
-              duration: messageType === "voice" ? normalizedDuration : 0,
               senderId: user.id,
               receiverId: null,
               timestamp: Date.now()
@@ -1927,7 +1914,6 @@ export default function Chat() {
               mimeType: upload.mimeType,
               fileSize: upload.size,
               size: upload.size,
-              duration: messageType === "voice" ? normalizedDuration : 0,
               replyTo: replyToMessageId || undefined
             })
           });
@@ -1966,15 +1952,9 @@ export default function Chat() {
       if (fromUrl.startsWith("/uploads/")) {
         return fromUrl.split("/").filter(Boolean).pop() || "";
       }
-      if (fromUrl.startsWith("/api/upload-voice/")) {
-        return fromUrl.split("/").filter(Boolean).pop() || "";
-      }
       try {
         const parsed = new URL(fromUrl);
         if (parsed.pathname.startsWith("/uploads/")) {
-          return parsed.pathname.split("/").filter(Boolean).pop() || "";
-        }
-        if (parsed.pathname.startsWith("/api/upload-voice/")) {
           return parsed.pathname.split("/").filter(Boolean).pop() || "";
         }
       } catch {}
@@ -1984,7 +1964,6 @@ export default function Chat() {
     const resolvePublicUploadUrl = (msg, fallbackKey = "") => {
       const value = String(msg?.fileUrl || msg?.content || "").trim();
       if (value.startsWith("http://") || value.startsWith("https://")) return value;
-      if (value.startsWith("/api/upload-voice/")) return `${API_BASE}${value}`;
       if (value.startsWith("/uploads/")) return `${API_BASE}${value}`;
       if (fallbackKey) return `${API_BASE}/uploads/${fallbackKey}`;
       return "";
@@ -1993,11 +1972,7 @@ export default function Chat() {
     let res = null;
     const fileKey = extractFileKey(message);
     if (fileKey) {
-      const secureUrl =
-        message?.type === "voice"
-          ? `${API_BASE}/api/upload-voice/${encodeURIComponent(fileKey)}`
-          : `${API_BASE}/api/upload/${encodeURIComponent(fileKey)}`;
-      const secureRes = await fetch(secureUrl, {
+      const secureRes = await fetch(`${API_BASE}/api/upload/${encodeURIComponent(fileKey)}`, {
         headers: authHeaders
       });
       if (secureRes.ok) {
@@ -2154,7 +2129,6 @@ export default function Chat() {
   function getMessagePreview(msg) {
     if (!msg) return "";
     if (msg.type === "image") return msg.fileName ? `Photo: ${msg.fileName}` : "Photo";
-    if (msg.type === "voice") return "Voice message";
     if (msg.type === "file") return msg.fileName || "File";
     if (msg.encrypted) return rendered[msg._id] || "Encrypted message";
     return msg.content || "Message";
