@@ -5,6 +5,7 @@
 // - Main module logic and exports
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { AiOutlineCheck, AiOutlineCheckCircle, AiOutlineCheckSquare } from "react-icons/ai";
 import { getAvatarSrc } from "../utils/avatar.js";
 import ReactionBar from "./ReactionBar";
 import { API_BASE } from "../services/api.js";
@@ -179,12 +180,12 @@ function MessageList({
     const readByOthers = Math.max(0, readCount - 1);
 
     if (readByOthers >= requiredOthers) {
-      return { symbol: "\u2713\u2713", className: "read" };
+      return { className: "read", Icon: AiOutlineCheckCircle, label: "Read" };
     }
     if (deliveredToOthers >= requiredOthers) {
-      return { symbol: "\u2713\u2713", className: "delivered" };
+      return { className: "delivered", Icon: AiOutlineCheckSquare, label: "Delivered" };
     }
-    return { symbol: "\u2713", className: "sent" };
+    return { className: "sent", Icon: AiOutlineCheck, label: "Sent" };
   };
 
   function getReplyPreview(msg) {
@@ -629,7 +630,7 @@ function MessageList({
                       <span title={new Date(msg.createdAt).toLocaleString()}>{formatTime(msg.createdAt)}</span>{" "}
                       {isOwn && (
                         <span className={`read-indicator ${receipt.className}`}>
-                          {receipt.symbol}
+                          <receipt.Icon className="read-indicator-icon" aria-label={receipt.label} title={receipt.label} />
                         </span>
                       )}
                     </div>

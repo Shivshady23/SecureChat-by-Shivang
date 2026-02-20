@@ -1470,6 +1470,13 @@ body {
   margin-left: 4px;
   opacity: 0.6;
   color: inherit;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.read-indicator-icon {
+  font-size: 0.95rem;
 }
 
 .read-indicator.sent {
