@@ -17,6 +17,7 @@ const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 const MAX_REACTION_EMOJI_LENGTH = 16;
 const MAX_EDIT_WINDOW_MS = 15 * 60 * 1000;
 const MAX_TEXT_MESSAGE_LENGTH = 8000;
+const MAX_VOICE_DURATION_SECONDS = 120;
 
 function isValidId(value) {
   return mongoose.Types.ObjectId.isValid(String(value || ""));
@@ -154,7 +155,8 @@ router.post("/:chatId", authRequired, async (req, res) => {
       aadB64,
       clientTs,
       clientMsgId,
-      integrityHash
+      integrityHash,
+      duration
     } = req.body || {};
 
     const chat = await Chat.findById(req.params.chatId);
@@ -162,16 +164,30 @@ router.post("/:chatId", authRequired, async (req, res) => {
       return res.status(404).json({ message: "Chat not found" });
     }
 
-    if (!type || !["text", "image", "file"].includes(type)) {
+    if (!type || !["text", "image", "file", "voice"].includes(type)) {
       return res.status(400).json({ message: "Invalid type" });
     }
     if (type === "text" && String(content || "").length > MAX_TEXT_MESSAGE_LENGTH) {
       return res.status(400).json({ message: "Message is too long" });
     }
     if (type !== "text" && !String(fileKey || "").trim()) {
-      return res.status(400).json({ message: "fileKey is required for file/image messages" });
+      return res.status(400).json({ message: "fileKey is required for media messages" });
     }
-    if (chat.type === "direct" && !Boolean(encrypted)) {
+
+    const normalizedDuration = Number(duration);
+    if (type === "voice") {
+      if (!Number.isFinite(normalizedDuration) || normalizedDuration <= 0) {
+        return res.status(400).json({ message: "Voice duration is required" });
+      }
+      if (normalizedDuration > MAX_VOICE_DURATION_SECONDS) {
+        return res.status(400).json({ message: "Voice duration exceeds 120 seconds limit" });
+      }
+      const normalizedMimeType = String(mimeType || "").toLowerCase();
+      if (normalizedMimeType && !normalizedMimeType.startsWith("audio/")) {
+        return res.status(400).json({ message: "Voice messages must use an audio MIME type" });
+      }
+    }
+    if (chat.type === "direct" && !Boolean(encrypted) && type !== "voice") {
       return res.status(400).json({ message: "Direct messages must be encrypted" });
     }
 
@@ -244,9 +260,13 @@ router.post("/:chatId", authRequired, async (req, res) => {
       : Number.isFinite(Number(size))
       ? Number(size)
       : 0;
-    const normalizedFileUrl =
-      String(fileUrl || content || "").trim() ||
-      (fileKey ? `/uploads/${fileKey}` : "");
+    const normalizedFileUrl = (() => {
+      const provided = String(fileUrl || content || "").trim();
+      if (provided) return provided;
+      if (!fileKey) return "";
+      if (type === "voice") return `/api/upload-voice/${fileKey}`;
+      return `/uploads/${fileKey}`;
+    })();
 
     const message = await Message.create({
       chatId: chat._id,
@@ -259,6 +279,7 @@ router.post("/:chatId", authRequired, async (req, res) => {
           : type === "text"
           ? content || ""
           : normalizedFileUrl,
+      duration: type === "voice" ? Math.round(normalizedDuration) : 0,
       encrypted: Boolean(encrypted),
       iv: ivValue,
       ciphertextB64: type === "text" ? cipherValue || "" : "",

@@ -26,6 +26,18 @@ const BLOCKED_FILE_EXTENSIONS = new Set([
 ]);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_VOICE_BYTES = 5 * 1024 * 1024;
+const MAX_VOICE_SECONDS = 120;
+const VOICE_MIME_TYPES = new Set([
+  "audio/webm",
+  "audio/webm;codecs=opus",
+  "audio/ogg",
+  "audio/ogg;codecs=opus",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/mpeg"
+]);
 
 function getFileExtension(name = "") {
   const value = String(name || "").toLowerCase();
@@ -42,6 +54,31 @@ function formatBytes(bytes) {
   return `${scaled >= 10 || index === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[index]}`;
 }
 
+function formatSeconds(seconds) {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const minutes = Math.floor(safe / 60)
+    .toString()
+    .padStart(2, "0");
+  const remain = (safe % 60).toString().padStart(2, "0");
+  return `${minutes}:${remain}`;
+}
+
+function resolveVoiceMimeType() {
+  if (typeof window === "undefined" || typeof MediaRecorder === "undefined") return "";
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/ogg;codecs=opus",
+    "audio/webm",
+    "audio/ogg"
+  ];
+  for (const candidate of candidates) {
+    if (MediaRecorder.isTypeSupported?.(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
 function validateSelectedFile(file, uploadType) {
   if (!file) return { ok: false, message: "No file selected." };
   const mimeType = String(file.type || "").toLowerCase();
@@ -53,6 +90,18 @@ function validateSelectedFile(file, uploadType) {
     }
     if (file.size > MAX_IMAGE_BYTES) {
       return { ok: false, message: "Image size must be 10MB or smaller." };
+    }
+    return { ok: true };
+  }
+
+  if (uploadType === "voice") {
+    const isAudioMime = mimeType.startsWith("audio/");
+    const isKnownVoiceMime = VOICE_MIME_TYPES.has(mimeType);
+    if (!isAudioMime && !isKnownVoiceMime) {
+      return { ok: false, message: "Only audio files are allowed for voice messages." };
+    }
+    if (file.size > MAX_VOICE_BYTES) {
+      return { ok: false, message: "Voice message size must be 5MB or smaller." };
     }
     return { ok: true };
   }
@@ -158,6 +207,7 @@ export default function MessageInput({
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [pendingVoiceDuration, setPendingVoiceDuration] = useState(0);
   const [recorderError, setRecorderError] = useState("");
 
   const typingTimeout = useRef(null);
@@ -170,6 +220,8 @@ export default function MessageInput({
   const recorderStreamRef = useRef(null);
   const recorderTimerRef = useRef(null);
   const recorderChunksRef = useRef([]);
+  const recorderDiscardRef = useRef(false);
+  const recordingSecondsRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -274,12 +326,14 @@ export default function MessageInput({
     setPreviewUrl("");
     setPendingFile(null);
     setPendingUploadType("file");
+    setPendingVoiceDuration(0);
     setFileError("");
   }
 
   function resetRecorderState() {
     setIsRecordingAudio(false);
     setRecordingSeconds(0);
+    recordingSecondsRef.current = 0;
     if (recorderTimerRef.current) {
       clearInterval(recorderTimerRef.current);
       recorderTimerRef.current = null;
@@ -300,8 +354,11 @@ export default function MessageInput({
     }
     clearPendingFile();
     setPendingFile(file);
-    setPendingUploadType(uploadType === "image" ? "image" : "file");
+    if (uploadType === "image") setPendingUploadType("image");
+    else if (uploadType === "voice") setPendingUploadType("voice");
+    else setPendingUploadType("file");
     setFileError("");
+    setPendingVoiceDuration(uploadType === "voice" ? Math.max(1, Math.floor(recordingSecondsRef.current || 0)) : 0);
     if (uploadType === "image") {
       setPreviewUrl(URL.createObjectURL(file));
     }
@@ -309,7 +366,10 @@ export default function MessageInput({
 
   function sendPendingFile() {
     if (!pendingFile || isUploading) return;
-    onSendFile(pendingFile, { uploadType: pendingUploadType });
+    onSendFile(pendingFile, {
+      uploadType: pendingUploadType,
+      duration: pendingUploadType === "voice" ? pendingVoiceDuration : 0
+    });
   }
 
   function handleSubmit(e) {
@@ -502,12 +562,23 @@ export default function MessageInput({
     setRecorderError("");
     setFileError("");
     clearPendingFile();
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setRecorderError("Microphone recording is not supported in this browser.");
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setRecorderError("MediaRecorder is not supported in this browser.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const preferredMimeType = resolveVoiceMimeType();
+      const recorder = preferredMimeType ? new MediaRecorder(stream, { mimeType: preferredMimeType }) : new MediaRecorder(stream);
       recorderStreamRef.current = stream;
       recorderRef.current = recorder;
       recorderChunksRef.current = [];
+      recorderDiscardRef.current = false;
+      recordingSecondsRef.current = 0;
 
       recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -522,12 +593,19 @@ export default function MessageInput({
       recorder.onstop = () => {
         const chunks = recorderChunksRef.current;
         const mimeType = recorder.mimeType || "audio/webm";
-        if (chunks.length > 0) {
+        const shouldDiscard = recorderDiscardRef.current;
+        if (!shouldDiscard && chunks.length > 0) {
           const blob = new Blob(chunks, { type: mimeType });
-          const file = new File([blob], `voice-${Date.now()}.webm`, { type: mimeType });
-          setPendingUpload(file, "file");
+          const extension = mimeType.includes("ogg") ? "ogg" : "webm";
+          const file = new File([blob], `voice-${Date.now()}.${extension}`, { type: mimeType });
+          if (file.size > MAX_VOICE_BYTES) {
+            setFileError("Voice message exceeded 5MB limit. Please record a shorter clip.");
+          } else {
+            setPendingUpload(file, "voice");
+          }
         }
         recorderChunksRef.current = [];
+        recorderDiscardRef.current = false;
         resetRecorderState();
       };
 
@@ -535,10 +613,18 @@ export default function MessageInput({
       setIsRecordingAudio(true);
       setRecordingSeconds(0);
       recorderTimerRef.current = setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
+        setRecordingSeconds((prev) => {
+          const next = prev + 1;
+          recordingSecondsRef.current = next;
+          if (next >= MAX_VOICE_SECONDS) {
+            stopVoiceRecording();
+          }
+          return next;
+        });
       }, 1000);
     } catch (err) {
-      setRecorderError(err?.message || "Microphone permission denied.");
+      const denied = String(err?.name || "").toLowerCase().includes("notallowed");
+      setRecorderError(denied ? "Microphone permission denied." : err?.message || "Unable to start microphone recording.");
       resetRecorderState();
     }
   }
@@ -554,6 +640,11 @@ export default function MessageInput({
     } catch {
       resetRecorderState();
     }
+  }
+
+  function cancelVoiceRecording() {
+    recorderDiscardRef.current = true;
+    stopVoiceRecording();
   }
 
   const pickerTheme = document.documentElement.classList.contains("theme-dark") ? "dark" : "light";
@@ -601,8 +692,14 @@ export default function MessageInput({
             <img src={previewUrl} alt="Preview" className="upload-preview-image" />
           ) : (
             <div className="upload-preview-file">
-              <div className="upload-preview-file-name">{pendingFile.name}</div>
-              <div className="upload-preview-file-meta">{formatBytes(pendingFile.size)}</div>
+              <div className="upload-preview-file-name">
+                {pendingUploadType === "voice" ? "Voice message" : pendingFile.name}
+              </div>
+              <div className="upload-preview-file-meta">
+                {pendingUploadType === "voice"
+                  ? `${formatSeconds(pendingVoiceDuration)} • ${formatBytes(pendingFile.size)}`
+                  : formatBytes(pendingFile.size)}
+              </div>
             </div>
           )}
           {isUploading && (
@@ -629,7 +726,10 @@ export default function MessageInput({
       {isRecordingAudio && (
         <div className="composer-recording-banner">
           <span className="recording-dot" />
-          <span>Recording voice: {recordingSeconds}s</span>
+          <span>Recording voice: {formatSeconds(recordingSeconds)} / {formatSeconds(MAX_VOICE_SECONDS)}</span>
+          <button type="button" className="recording-cancel-btn" onClick={cancelVoiceRecording}>
+            Cancel
+          </button>
         </div>
       )}
 
